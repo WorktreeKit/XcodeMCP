@@ -14,6 +14,8 @@ export interface ParsedBuildResults {
     errors: string[];
     warnings: string[];
     buildStatus?: string;
+    errorCount?: number;
+    warningCount?: number;
 }
 export interface EnvironmentValidationResult {
     valid: boolean;

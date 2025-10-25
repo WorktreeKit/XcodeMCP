@@ -6,6 +6,8 @@ export declare class BuildLogParser {
     static getRecentBuildLogs(projectPath: string, sinceTime: number): Promise<BuildLogInfo[]>;
     static getLatestTestLog(projectPath: string): Promise<BuildLogInfo | null>;
     static parseBuildLog(logPath: string, retryCount?: number, maxRetries?: number): Promise<ParsedBuildResults>;
+    private static parseBuildSummary;
+    private static parseDetailedIssues;
     static canParseLog(logPath: string): Promise<boolean>;
     static parseTestResults(_xcresultPath: string): Promise<ParsedBuildResults>;
 }
