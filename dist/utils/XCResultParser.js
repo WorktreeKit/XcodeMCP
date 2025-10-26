@@ -73,7 +73,15 @@ export class XCResultParser {
             const hasInfoPlist = existsSync(infoPlistPath);
             const hasDatabase = existsSync(databasePath);
             const hasData = existsSync(dataPath);
-            if (hasInfoPlist && hasDatabase && hasData) {
+            // Xcode 16+ no longer writes database.sqlite3 for lightweight xcresult bundles.
+            const essentialFilesReady = hasInfoPlist && hasData;
+            if (essentialFilesReady) {
+                if (!hasDatabase) {
+                    Logger.info('database.sqlite3 not present – continuing (new XCResult format)');
+                }
+                else {
+                    Logger.info('database.sqlite3 detected');
+                }
                 Logger.info('All essential XCResult files are present - ready for stabilization check');
                 // Fast-path for small XCResult files - skip extensive waiting for files < 5MB
                 const xcresultStats = await stat(xcresultPath);
@@ -88,16 +96,22 @@ export class XCResultParser {
             }
             // Log progress every 30 seconds
             if (Date.now() - lastProgressTime >= 30000) {
-                Logger.info(`Still waiting for XCResult files - Info.plist: ${hasInfoPlist ? '✓' : '✗'}, database.sqlite3: ${hasDatabase ? '✓' : '✗'}, Data: ${hasData ? '✓' : '✗'}`);
+                Logger.info(`Still waiting for XCResult files - Info.plist: ${hasInfoPlist ? '✓' : '✗'}, Data: ${hasData ? '✓' : '✗'}, database.sqlite3: ${hasDatabase ? '✓' : 'optional'}`);
                 lastProgressTime = Date.now();
             }
             await new Promise(resolve => setTimeout(resolve, 3000)); // Check every 3 seconds
         }
-        if (!existsSync(infoPlistPath) || !existsSync(databasePath) || !existsSync(dataPath)) {
+        const hasInfoPlistFinal = existsSync(infoPlistPath);
+        const hasDataFinal = existsSync(dataPath);
+        const hasDatabaseFinal = existsSync(databasePath);
+        if (!hasInfoPlistFinal || !hasDataFinal) {
             const elapsed = Math.round((Date.now() - startTime) / 60000);
             Logger.error(`Essential XCResult files did not appear after ${elapsed} minutes`);
             Logger.error(`This suggests Xcode encountered a serious issue writing the XCResult`);
             return false;
+        }
+        if (!hasDatabaseFinal) {
+            Logger.info('Proceeding without database.sqlite3 (not present in this XCResult bundle)');
         }
         // Phase 3: Critical stabilization check - wait until sizes haven't changed for N seconds
         // This implements user insight: "wait until its size hasnt changed for 10 seconds before trying to read it"
