@@ -126,19 +126,34 @@ export class XCResultParser {
         Logger.info('This is critical - we must not touch xcresulttool until files are completely stable');
         let previousSizes = {};
         let stableStartTime = null;
+        const includeDatabase = existsSync(databasePath);
         while (Date.now() - startTime < timeoutMs) {
             try {
                 const infoPlistStats = await stat(infoPlistPath);
-                const databaseStats = await stat(databasePath);
                 const dataStats = await stat(dataPath);
+                let databaseSize = 0;
+                if (includeDatabase) {
+                    try {
+                        const databaseStats = await stat(databasePath);
+                        databaseSize = databaseStats.size;
+                    }
+                    catch (dbError) {
+                        Logger.debug(`Error checking database size: ${dbError}`);
+                        // Treat missing/locked database as instability
+                        stableStartTime = null;
+                        previousSizes = {};
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        continue;
+                    }
+                }
                 const currentSizes = {
                     infoPlist: infoPlistStats.size,
-                    database: databaseStats.size,
-                    data: dataStats.size
+                    data: dataStats.size,
+                    ...(includeDatabase ? { database: databaseSize } : {})
                 };
                 const sizesMatch = (previousSizes.infoPlist === currentSizes.infoPlist &&
-                    previousSizes.database === currentSizes.database &&
-                    previousSizes.data === currentSizes.data);
+                    previousSizes.data === currentSizes.data &&
+                    (!includeDatabase || previousSizes.database === currentSizes.database));
                 if (sizesMatch && Object.keys(previousSizes).length > 0) {
                     // Sizes are stable
                     if (stableStartTime === null) {
@@ -158,7 +173,8 @@ export class XCResultParser {
                     // Sizes changed - reset stability timer
                     if (stableStartTime !== null) {
                         Logger.info(`File sizes changed - restarting stability check`);
-                        Logger.debug(`New sizes - Info.plist: ${currentSizes.infoPlist}, database: ${currentSizes.database}, Data: ${currentSizes.data}`);
+                        const databaseLog = includeDatabase ? `, database: ${currentSizes.database}` : '';
+                        Logger.debug(`New sizes - Info.plist: ${currentSizes.infoPlist}${databaseLog}, Data: ${currentSizes.data}`);
                     }
                     stableStartTime = null;
                 }

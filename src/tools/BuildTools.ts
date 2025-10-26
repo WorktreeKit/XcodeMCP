@@ -13,6 +13,25 @@ import { getWorkspaceByPathScript } from '../utils/JXAHelpers.js';
 import type { McpResult, OpenProjectCallback } from '../types/index.js';
 
 export class BuildTools {
+  private static pendingTestOptions: {
+    testPlanPath?: string;
+    selectedTests?: string[];
+    selectedTestClasses?: string[];
+    testTargetIdentifier?: string;
+    testTargetName?: string;
+  } | null = null;
+
+  public static setPendingTestOptions(options: {
+    testPlanPath?: string;
+    selectedTests?: string[];
+    selectedTestClasses?: string[];
+    testTargetIdentifier?: string;
+    testTargetName?: string;
+  }): void {
+    Logger.debug(`Pending test options set: ${JSON.stringify(options)}`);
+    this.pendingTestOptions = options;
+  }
+
   public static async build(
     projectPath: string, 
     schemeName: string, 
@@ -342,6 +361,14 @@ export class BuildTools {
       testTargetName?: string;
     }
   ): Promise<McpResult> {
+    if ((!options || Object.keys(options).length === 0) && this.pendingTestOptions) {
+      Logger.debug(`Using pending test options fallback: ${JSON.stringify(this.pendingTestOptions)}`);
+      options = this.pendingTestOptions;
+      this.pendingTestOptions = null;
+    } else {
+      this.pendingTestOptions = null;
+    }
+
     const validationError = PathValidator.validateProjectPath(projectPath);
     if (validationError) return validationError;
 
@@ -407,6 +434,8 @@ export class BuildTools {
         return { content: [{ type: 'text', text: `Failed to set destination '${destination}': ${errorMessage}` }] };
       }
     }
+
+    Logger.debug(`Test options received: ${JSON.stringify(options)}, arguments length: ${arguments.length}`);
 
     // Handle test plan modification if selective tests are requested
     let originalTestPlan: string | null = null;

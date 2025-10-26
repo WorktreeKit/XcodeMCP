@@ -11,6 +11,11 @@ import { Logger } from '../utils/Logger.js';
 import { XCResultParser } from '../utils/XCResultParser.js';
 import { getWorkspaceByPathScript } from '../utils/JXAHelpers.js';
 export class BuildTools {
+    static pendingTestOptions = null;
+    static setPendingTestOptions(options) {
+        Logger.debug(`Pending test options set: ${JSON.stringify(options)}`);
+        this.pendingTestOptions = options;
+    }
     static async build(projectPath, schemeName, destination = null, openProject) {
         const validationError = PathValidator.validateProjectPath(projectPath);
         if (validationError)
@@ -288,6 +293,14 @@ export class BuildTools {
         return { content: [{ type: 'text', text: result }] };
     }
     static async test(projectPath, destination, commandLineArguments = [], openProject, options) {
+        if ((!options || Object.keys(options).length === 0) && this.pendingTestOptions) {
+            Logger.debug(`Using pending test options fallback: ${JSON.stringify(this.pendingTestOptions)}`);
+            options = this.pendingTestOptions;
+            this.pendingTestOptions = null;
+        }
+        else {
+            this.pendingTestOptions = null;
+        }
         const validationError = PathValidator.validateProjectPath(projectPath);
         if (validationError)
             return validationError;
@@ -350,6 +363,7 @@ export class BuildTools {
                 return { content: [{ type: 'text', text: `Failed to set destination '${destination}': ${errorMessage}` }] };
             }
         }
+        Logger.debug(`Test options received: ${JSON.stringify(options)}, arguments length: ${arguments.length}`);
         // Handle test plan modification if selective tests are requested
         let originalTestPlan = null;
         let shouldRestoreTestPlan = false;

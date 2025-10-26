@@ -1,5 +1,13 @@
 import type { McpResult, OpenProjectCallback } from '../types/index.js';
 export declare class BuildTools {
+    private static pendingTestOptions;
+    static setPendingTestOptions(options: {
+        testPlanPath?: string;
+        selectedTests?: string[];
+        selectedTestClasses?: string[];
+        testTargetIdentifier?: string;
+        testTargetName?: string;
+    }): void;
     static build(projectPath: string, schemeName: string, destination: string | null | undefined, openProject: OpenProjectCallback): Promise<McpResult>;
     static clean(projectPath: string, openProject: OpenProjectCallback): Promise<McpResult>;
     static test(projectPath: string, destination: string, commandLineArguments: string[] | undefined, openProject: OpenProjectCallback, options?: {

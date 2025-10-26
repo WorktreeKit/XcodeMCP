@@ -442,13 +442,36 @@ export class XcodeServer {
             if (args.selected_test_classes) testOptions.selectedTestClasses = args.selected_test_classes as string[];
             if (args.test_target_identifier) testOptions.testTargetIdentifier = args.test_target_identifier as string;
             if (args.test_target_name) testOptions.testTargetName = args.test_target_name as string;
-            
+
+            // Fallback: if no test plan provided, convert selected tests to -only-testing arguments
+            if ((!args.test_plan_path || (Array.isArray(args.test_plan_path) && args.test_plan_path.length === 0)) && args.selected_tests) {
+              const selectedTestsArray = Array.isArray(args.selected_tests)
+                ? args.selected_tests as string[]
+                : [String(args.selected_tests)];
+              const existingArgs = Array.isArray(args.command_line_arguments)
+                ? [...(args.command_line_arguments as string[])]
+                : [];
+              selectedTestsArray.forEach(test => {
+                if (test && typeof test === 'string') {
+                  const trimmed = test.trim();
+                  if (trimmed.length > 0) {
+                    existingArgs.push(`-only-testing:${trimmed}`);
+                  }
+                }
+              });
+              args.command_line_arguments = existingArgs;
+              Logger.debug(`Converted selected tests to command line arguments: ${existingArgs.join(' ')}`);
+            }
+
+            Logger.debug(`Computed testOptions keys: ${Object.keys(testOptions).join(',')}`);
+            BuildTools.setPendingTestOptions(testOptions);
+
             return await BuildTools.test(
               args.xcodeproj as string, 
               args.destination as string,
               (args.command_line_arguments as string[]) || [], 
               this.openProject.bind(this),
-              Object.keys(testOptions).length > 0 ? testOptions : undefined
+              testOptions
             );
           case 'xcode_build_and_run':
             if (!args.xcodeproj) {
@@ -710,6 +733,7 @@ export class XcodeServer {
 
   public async test(projectPath: string, destination: string, commandLineArguments: string[] = []): Promise<import('./types/index.js').McpResult> {
     const { BuildTools } = await import('./tools/BuildTools.js');
+    Logger.debug(`Direct XcodeServer.test invoked with destination '${destination}' and args length ${commandLineArguments.length}`);
     return BuildTools.test(projectPath, destination, commandLineArguments, this.openProject.bind(this));
   }
 
@@ -806,6 +830,8 @@ export class XcodeServer {
         return { content: [{ type: 'text', text: report }] };
       }
 
+      Logger.debug(`callToolDirect: ${name} args = ${JSON.stringify(args)}`);
+
       // Validate environment for all other tools
       const validationError = await this.validateToolOperation(name);
       if (validationError) {
@@ -881,12 +907,51 @@ export class XcodeServer {
               `Missing required parameter: destination\n\n💡 To fix this:\n• Specify the test destination (e.g., "iPhone 15 Pro Simulator")\n• Use 'get-run-destinations' to see available destinations\n• Example: "iPad Air Simulator" or "iPhone 16 Pro"`
             );
           }
-          return await BuildTools.test(
-            args.xcodeproj as string, 
-            args.destination as string,
-            (args.command_line_arguments as string[]) || [], 
-            this.openProject.bind(this)
-          );
+          {
+            const testOptions: {
+              testPlanPath?: string;
+              selectedTests?: string[];
+              selectedTestClasses?: string[];
+              testTargetIdentifier?: string;
+              testTargetName?: string;
+            } = {};
+
+            if (args.test_plan_path) testOptions.testPlanPath = args.test_plan_path as string;
+            if (args.selected_tests) testOptions.selectedTests = args.selected_tests as string[];
+            if (args.selected_test_classes) testOptions.selectedTestClasses = args.selected_test_classes as string[];
+            if (args.test_target_identifier) testOptions.testTargetIdentifier = args.test_target_identifier as string;
+            if (args.test_target_name) testOptions.testTargetName = args.test_target_name as string;
+
+            if ((!args.test_plan_path || (Array.isArray(args.test_plan_path) && args.test_plan_path.length === 0)) && args.selected_tests) {
+              const selectedTestsArray = Array.isArray(args.selected_tests)
+                ? args.selected_tests as string[]
+                : [String(args.selected_tests)];
+              const existingArgs = Array.isArray(args.command_line_arguments)
+                ? [...(args.command_line_arguments as string[])]
+                : [];
+              selectedTestsArray.forEach(test => {
+                if (test && typeof test === 'string') {
+                  const trimmed = test.trim();
+                  if (trimmed.length > 0) {
+                    existingArgs.push(`-only-testing:${trimmed}`);
+                  }
+                }
+              });
+              args.command_line_arguments = existingArgs;
+              Logger.debug(`Converted selected tests to command line arguments: ${existingArgs.join(' ')}`);
+            }
+
+            Logger.debug(`Computed testOptions keys (fallback switch): ${Object.keys(testOptions).join(',')}`);
+            BuildTools.setPendingTestOptions(testOptions);
+
+            return await BuildTools.test(
+              args.xcodeproj as string,
+              args.destination as string,
+              (args.command_line_arguments as string[]) || [],
+              this.openProject.bind(this),
+              testOptions
+            );
+          }
         case 'xcode_build_and_run':
           if (!args.xcodeproj) {
             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
