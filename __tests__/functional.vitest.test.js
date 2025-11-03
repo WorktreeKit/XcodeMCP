@@ -48,6 +48,20 @@ describe('XcodeMCP Server Functional Tests', () => {
     expect(expectedTools).toContain('xcode_build_and_run');
   });
 
+  test('health check output includes version metadata', async () => {
+    const { XcodeServer } = await import('../dist/XcodeServer.js');
+    const server = new XcodeServer({ includeClean: true });
+    const result = await server.callToolDirect('xcode_health_check', {});
+
+    const aggregated = (result.content ?? [])
+      .filter(item => item.type === 'text')
+      .map(item => item.text)
+      .join('\n');
+
+    expect(aggregated).toContain('XcodeMCP Version Information');
+    expect(aggregated).toMatch(/Package version:\s+.+/);
+  });
+
   test('should validate JXA script generation patterns', () => {
     // Test script patterns that should be valid JavaScript
     const testScripts = [

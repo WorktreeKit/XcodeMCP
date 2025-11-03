@@ -151,6 +151,7 @@ export declare class XCResultParser {
     private countTestCases;
     private searchTestNodeById;
     private findTestNodeByIndex;
+    private normalizeResult;
     private getStatusIcon;
     /**
      * Extract attachments from activities JSON recursively

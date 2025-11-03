@@ -5,6 +5,7 @@ import { readFile } from 'fs/promises';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { XcodeServer } from './XcodeServer.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { Logger } from './utils/Logger.js';
 import { getToolDefinitions } from './shared/toolDefinitions.js';
 
@@ -38,13 +39,119 @@ function schemaPropertyToOption(name: string, property: any): { flags: string; d
   const dashName = name.replace(/_/g, '-');
   const flags = property.type === 'boolean' ? `--${dashName}` : `--${dashName} <value>`;
   const description = property.description || `${name} parameter`;
-  
+
   const option = { flags, description };
   if (property.default !== undefined) {
     (option as any).defaultValue = property.default;
   }
   
   return option;
+}
+
+const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+
+function extractJobIdFromResult(result: CallToolResult | undefined): string | null {
+  if (!result || !Array.isArray(result.content)) return null;
+  for (const item of result.content) {
+    if (item?.type === 'text' && typeof item.text === 'string') {
+      const match = item.text.match(/Job ID:\s+([A-Za-z0-9\-]+)/);
+      if (match && match[1]) {
+        return match[1];
+      }
+    }
+  }
+  return null;
+}
+
+function isTestJobRunning(result: CallToolResult | undefined): boolean {
+  if (!result || !Array.isArray(result.content)) return false;
+  return result.content.some(
+    item => item?.type === 'text' && typeof item.text === 'string' && item.text.includes('TEST IN PROGRESS'),
+  );
+}
+
+function detectError(toolName: string, result: CallToolResult | undefined): boolean {
+  if (!result) return false;
+  if (result.isError) return true;
+
+  if (!result.content || !Array.isArray(result.content)) {
+    return false;
+  }
+
+  for (const item of result.content) {
+    if (item?.type === 'text' && typeof item.text === 'string') {
+      const text = item.text;
+
+      if (toolName === 'xcode_health_check') {
+        if (text.includes('⚠️  CRITICAL ERRORS DETECTED') || text.includes('❌ OS:') || text.includes('❌ OSASCRIPT:')) {
+          return true;
+        }
+        continue;
+      }
+
+      if (toolName === 'xcode_test') {
+        if (text.includes('✅ All tests passed!')) {
+          continue;
+        }
+        if (
+          text.includes('❌ TEST BUILD FAILED') ||
+          text.includes('❌ TESTS FAILED') ||
+          text.includes('⏹️ TEST BUILD INTERRUPTED') ||
+          (/Failed:\s*(?!0)/.test(text) && !text.includes('Failed: 0'))
+        ) {
+          return true;
+        }
+        continue;
+      }
+
+      if (
+        text.includes('❌') ||
+        text.includes('does not exist') ||
+        text.includes('failed') ||
+        text.includes('error') ||
+        text.includes('Error') ||
+        text.includes('missing required parameter') ||
+        text.includes('cannot find') ||
+        text.includes('not found') ||
+        text.includes('invalid') ||
+        text.includes('Invalid')
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+async function waitForTestJobCompletion(
+  server: XcodeServer,
+  jobId: string,
+  jsonOutput: boolean,
+  verbose: boolean,
+): Promise<CallToolResult> {
+  const pollIntervalMs = 5000;
+  if (!jsonOutput) {
+    console.error(`⏳ Waiting for test job ${jobId} to complete...`);
+  }
+
+  while (true) {
+    await delay(pollIntervalMs);
+    const status = await server.callToolDirect('xcode_test_status', { job_id: jobId });
+
+    if (isTestJobRunning(status)) {
+      if (!jsonOutput && verbose) {
+        console.error(`  • still running (${new Date().toLocaleTimeString()})`);
+      }
+      continue;
+    }
+
+    if (!jsonOutput) {
+      console.error(`✅ Test job ${jobId} completed.`);
+    }
+
+    return status;
+  }
 }
 
 /**
@@ -367,54 +474,22 @@ async function main(): Promise<void> {
           }
           
           // Call the tool directly on server
-          const result = await server.callToolDirect(tool.name, toolArgs);
-          
-          // Check if the result indicates an error
-          let hasError = false;
-          if (result?.content && Array.isArray(result.content)) {
-            for (const item of result.content) {
-              if (item.type === 'text' && item.text) {
-                const text = item.text;
-                
-                // Special case for health-check: don't treat degraded mode as error
-                if (tool.name === 'xcode_health_check') {
-                  // Only treat as error if there are critical failures
-                  hasError = text.includes('⚠️  CRITICAL ERRORS DETECTED') || 
-                            text.includes('❌ OS:') || 
-                            text.includes('❌ OSASCRIPT:');
-                } else if (tool.name === 'xcode_test') {
-                  // Special case for test results: check if tests actually failed
-                  if (text.includes('✅ All tests passed!')) {
-                    hasError = false;
-                  } else {
-                    // Look for actual test failures or build errors
-                    hasError = text.includes('❌ TEST BUILD FAILED') ||
-                              text.includes('❌ TESTS FAILED') ||
-                              text.includes('⏹️ TEST BUILD INTERRUPTED') ||
-                              (text.includes('Failed:') && !text.includes('Failed: 0'));
-                  }
-                } else {
-                  // Check for common error patterns
-                  if (text.includes('❌') || 
-                      text.includes('does not exist') ||
-                      text.includes('failed') ||
-                      text.includes('error') ||
-                      text.includes('Error') ||
-                      text.includes('missing required parameter') ||
-                      text.includes('cannot find') ||
-                      text.includes('not found') ||
-                      text.includes('invalid') ||
-                      text.includes('Invalid')) {
-                    hasError = true;
-                    break;
-                  }
-                }
+          let result = await server.callToolDirect(tool.name, toolArgs);
+
+          // For xcode_test, handle asynchronous job polling transparently for the CLI
+          if (tool.name === 'xcode_test') {
+            const jobId = extractJobIdFromResult(result);
+            if (jobId) {
+              if (!program.opts().json) {
+                console.log(formatResult(result, false));
               }
+              result = await waitForTestJobCompletion(server, jobId, program.opts().json, cmd.opts().verbose ?? false);
             }
           }
-          
+
           // Output the result
           const output = formatResult(result, program.opts().json);
+          const hasError = detectError(tool.name, result);
           if (hasError) {
             console.error(output);
           } else {

@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs';
+import { dirname, join, basename } from 'path';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { Logger } from '../utils/Logger.js';
 export class TestPlanTools {
@@ -17,16 +18,120 @@ export class TestPlanTools {
             catch (error) {
                 throw new McpError(ErrorCode.InvalidParams, `Failed to read test plan file: ${testPlanPath}. Error: ${error instanceof Error ? error.message : String(error)}`);
             }
+            const splitIdentifier = (identifier, targetName) => {
+                const safeIdentifier = typeof identifier === 'string' ? identifier : '';
+                const fallback = {
+                    classQualified: String(safeIdentifier),
+                    targetQualified: String(safeIdentifier)
+                };
+                if (!safeIdentifier)
+                    return fallback;
+                const trimmed = safeIdentifier.trim();
+                if (!trimmed)
+                    return fallback;
+                const parts = trimmed.split('/').filter(Boolean);
+                if (parts.length >= 2) {
+                    const rawMethodName = parts[parts.length - 1] ?? '';
+                    const methodName = rawMethodName.replace(/\(\)$/, '');
+                    const className = parts[parts.length - 2] ?? '';
+                    const classQualified = className && methodName ? `${className}/${methodName}` : trimmed;
+                    const targetPart = parts.length === 3 ? parts[0] : targetName;
+                    const targetQualified = targetPart ? `${targetPart}/${classQualified}` : classQualified;
+                    return {
+                        classQualified: String(classQualified),
+                        targetQualified: String(targetQualified)
+                    };
+                }
+                if (parts.length === 1) {
+                    const classQualified = parts[0];
+                    const targetQualified = targetName ? `${targetName}/${classQualified}` : classQualified;
+                    return {
+                        classQualified: String(classQualified),
+                        targetQualified: String(targetQualified)
+                    };
+                }
+                return fallback;
+            };
+            const normalizedTargets = testTargets.map(config => {
+                const targetName = config.target?.name;
+                const normalizedSelected = (config.selectedTests || []).map(identifier => splitIdentifier(identifier, targetName));
+                const normalizedSkipped = (config.skippedTests || []).map(identifier => splitIdentifier(identifier, targetName));
+                return {
+                    config,
+                    normalizedSelected,
+                    normalizedSkipped
+                };
+            });
             // Update test targets
-            testPlan.testTargets = testTargets.map(config => ({
-                target: {
-                    containerPath: config.target.containerPath,
-                    identifier: config.target.identifier,
-                    name: config.target.name
-                },
-                ...(config.selectedTests && config.selectedTests.length > 0 && { selectedTests: config.selectedTests }),
-                ...(config.skippedTests && config.skippedTests.length > 0 && { skippedTests: config.skippedTests })
-            }));
+            testPlan.testTargets = normalizedTargets.map(({ config, normalizedSelected, normalizedSkipped }) => {
+                const selectedClassQualified = normalizedSelected
+                    .map(item => item.classQualified)
+                    .filter((value) => typeof value === 'string' && value.length > 0);
+                const skippedClassQualified = normalizedSkipped
+                    .map(item => item.classQualified)
+                    .filter((value) => typeof value === 'string' && value.length > 0);
+                const targetConfig = {
+                    target: {
+                        containerPath: config.target.containerPath,
+                        identifier: config.target.identifier,
+                        name: config.target.name
+                    },
+                    isEnabled: true
+                };
+                if (selectedClassQualified.length > 0) {
+                    targetConfig.selectedTests = selectedClassQualified;
+                    targetConfig.enabledTests = selectedClassQualified;
+                    targetConfig.onlyTestIdentifiers = selectedClassQualified;
+                    targetConfig.testSelectionMode = 'selectTests';
+                }
+                if (skippedClassQualified.length > 0) {
+                    targetConfig.skippedTests = skippedClassQualified;
+                }
+                return targetConfig;
+            });
+            // If we have explicit selected tests, propagate them to onlyTestIdentifiers
+            const combinedEnabledTests = normalizedTargets
+                .flatMap(target => target.normalizedSelected.map(item => item.targetQualified))
+                .filter((value) => typeof value === 'string' && value.length > 0)
+                .filter((value, index, self) => self.indexOf(value) === index);
+            const combinedOnlyTestIdentifiers = normalizedTargets
+                .flatMap(target => target.normalizedSelected.map(item => item.targetQualified))
+                .filter((value) => typeof value === 'string' && value.length > 0)
+                .filter((value, index, self) => self.indexOf(value) === index);
+            if (!testPlan.defaultOptions) {
+                testPlan.defaultOptions = {};
+            }
+            testPlan.defaultOptions.automaticallyIncludeNewTests = combinedOnlyTestIdentifiers.length === 0;
+            if (combinedOnlyTestIdentifiers.length > 0) {
+                testPlan.defaultOptions.onlyTestIdentifiers = combinedOnlyTestIdentifiers;
+                testPlan.defaultOptions.enabledTests = combinedEnabledTests;
+                testPlan.defaultOptions.testSelectionMode = 'selectTests';
+            }
+            else {
+                delete testPlan.defaultOptions.onlyTestIdentifiers;
+                delete testPlan.defaultOptions.enabledTests;
+                delete testPlan.defaultOptions.testSelectionMode;
+            }
+            if (Array.isArray(testPlan.configurations)) {
+                testPlan.configurations = testPlan.configurations.map(configuration => {
+                    const options = configuration.options || {};
+                    options.automaticallyIncludeNewTests = combinedOnlyTestIdentifiers.length === 0;
+                    if (combinedOnlyTestIdentifiers.length > 0) {
+                        options.onlyTestIdentifiers = combinedOnlyTestIdentifiers;
+                        options.enabledTests = combinedEnabledTests;
+                        options.testSelectionMode = 'selectTests';
+                    }
+                    else {
+                        delete options.onlyTestIdentifiers;
+                        delete options.enabledTests;
+                        delete options.testSelectionMode;
+                    }
+                    return {
+                        ...configuration,
+                        options
+                    };
+                });
+            }
             // Ensure version is set
             if (!testPlan.version) {
                 testPlan.version = 1;
@@ -34,6 +139,19 @@ export class TestPlanTools {
             // Write updated test plan
             try {
                 await fs.writeFile(testPlanPath, JSON.stringify(testPlan, null, 2), 'utf8');
+                Logger.debug(`Test plan '${testPlanPath}' updated with ${combinedEnabledTests.length} selected test identifiers: ${combinedEnabledTests.join(', ')}`);
+                if ((process.env.LOG_LEVEL || '').toUpperCase() === 'DEBUG') {
+                    const serializedPlan = JSON.stringify(testPlan, null, 2);
+                    await fs.writeFile(`${testPlanPath}.mcp-debug.json`, serializedPlan, 'utf8');
+                    await fs.writeFile(`${testPlanPath}.mcp-last.json`, serializedPlan, 'utf8');
+                    try {
+                        const snapshotPath = join(dirname(testPlanPath), `${basename(testPlanPath, '.xctestplan')}.mcp-snapshot.json`);
+                        await fs.writeFile(snapshotPath, serializedPlan, 'utf8');
+                    }
+                    catch (snapshotError) {
+                        Logger.debug(`Failed to write snapshot debug plan: ${snapshotError}`);
+                    }
+                }
             }
             catch (error) {
                 throw new McpError(ErrorCode.InternalError, `Failed to write test plan file: ${testPlanPath}. Error: ${error instanceof Error ? error.message : String(error)}`);

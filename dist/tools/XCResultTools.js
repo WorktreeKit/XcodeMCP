@@ -212,13 +212,15 @@ export class XCResultTools {
             }
             else {
                 attachments.forEach((att, index) => {
-                    const filename = att.name || att.filename || 'unnamed';
+                    const rawFilename = att.name ?? att.filename ?? 'unnamed';
+                    const filename = typeof rawFilename === 'string' ? rawFilename : String(rawFilename);
                     output += `[${index + 1}] ${filename}\n`;
                     // Determine type from identifier or filename
                     let type = att.uniform_type_identifier || att.uniformTypeIdentifier || '';
                     if (!type || type === 'unknown') {
                         // Infer type from filename extension or special patterns
-                        const ext = filename.toLowerCase().split('.').pop();
+                        const lowered = filename.toLowerCase();
+                        const ext = lowered.split('.').pop();
                         if (ext === 'jpeg' || ext === 'jpg')
                             type = 'public.jpeg';
                         else if (ext === 'png')
@@ -229,11 +231,11 @@ export class XCResultTools {
                             type = 'com.apple.quicktime-movie';
                         else if (ext === 'txt')
                             type = 'public.plain-text';
-                        else if (filename.toLowerCase().includes('app ui hierarchy'))
+                        else if (lowered.includes('app ui hierarchy'))
                             type = 'ui-hierarchy';
-                        else if (filename.toLowerCase().includes('ui snapshot'))
+                        else if (lowered.includes('ui snapshot'))
                             type = 'ui-snapshot';
-                        else if (filename.toLowerCase().includes('synthesized event'))
+                        else if (lowered.includes('synthesized event'))
                             type = 'synthesized-event';
                         else
                             type = 'unknown';
@@ -306,12 +308,14 @@ export class XCResultTools {
             if (!attachmentId) {
                 throw new McpError(ErrorCode.InternalError, 'Attachment does not have a valid ID for export');
             }
-            const filename = attachment.filename || attachment.name || `attachment_${attachmentIndex}`;
+            const rawFilename = attachment.filename ?? attachment.name ?? `attachment_${attachmentIndex}`;
+            const filename = typeof rawFilename === 'string' ? rawFilename : String(rawFilename);
             // Determine type from identifier or filename first
             let type = attachment.uniform_type_identifier || attachment.uniformTypeIdentifier || '';
             if (!type || type === 'unknown') {
                 // Infer type from filename extension or special patterns
-                const ext = filename.toLowerCase().split('.').pop();
+                const lowered = filename.toLowerCase();
+                const ext = lowered.split('.').pop();
                 if (ext === 'jpeg' || ext === 'jpg')
                     type = 'public.jpeg';
                 else if (ext === 'png')
@@ -322,11 +326,11 @@ export class XCResultTools {
                     type = 'com.apple.quicktime-movie';
                 else if (ext === 'txt')
                     type = 'public.plain-text';
-                else if (filename.toLowerCase().includes('app ui hierarchy'))
+                else if (lowered.includes('app ui hierarchy'))
                     type = 'ui-hierarchy';
-                else if (filename.toLowerCase().includes('ui snapshot'))
+                else if (lowered.includes('ui snapshot'))
                     type = 'ui-snapshot';
-                else if (filename.toLowerCase().includes('synthesized event'))
+                else if (lowered.includes('synthesized event'))
                     type = 'synthesized-event';
                 else
                     type = 'unknown';
@@ -1105,7 +1109,8 @@ export class XCResultTools {
         // Filter to only image attachments
         const imageAttachments = attachments.filter(attachment => {
             const typeId = attachment.uniform_type_identifier || attachment.uniformTypeIdentifier || '';
-            const filename = attachment.filename || attachment.name || '';
+            const rawFilename = attachment.filename ?? attachment.name ?? '';
+            const filename = typeof rawFilename === 'string' ? rawFilename : String(rawFilename);
             return typeId.includes('png') ||
                 typeId === 'public.png' ||
                 typeId.includes('jpeg') ||
@@ -1146,7 +1151,8 @@ export class XCResultTools {
     static findVideoAttachment(attachments) {
         return attachments.find(attachment => {
             const typeId = attachment.uniform_type_identifier || attachment.uniformTypeIdentifier || '';
-            const filename = attachment.filename || attachment.name || '';
+            const rawFilename = attachment.filename ?? attachment.name ?? '';
+            const filename = typeof rawFilename === 'string' ? rawFilename : String(rawFilename);
             // Check for video type identifiers or video extensions
             return typeId.includes('mp4') ||
                 typeId.includes('quicktime') ||

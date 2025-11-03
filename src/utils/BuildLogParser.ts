@@ -289,22 +289,63 @@ export class BuildLogParser {
     }
   }
 
-  public static async parseBuildLog(logPath: string, retryCount = 0, maxRetries = 6): Promise<ParsedBuildResults> {
+  public static async parseBuildLog(
+    logPath: string,
+    retryCount = 0,
+    maxRetries = 6,
+    options: { timeoutMs?: number } = {},
+  ): Promise<ParsedBuildResults> {
     const delays = [1000, 2000, 3000, 5000, 8000, 13000];
     return new Promise<ParsedBuildResults>((resolve) => {
       const command: ChildProcess = spawn('xclogparser', ['parse', '--file', logPath, '--reporter', 'issues']);
       let stdout = '';
       let stderr = '';
-      
-      // Ensure child process cleanup on exit
-      const cleanup = () => {
+
+      const handleProcessExit = () => {
         if (command && !command.killed) {
           command.kill('SIGTERM');
         }
       };
-      process.once('exit', cleanup);
-      process.once('SIGTERM', cleanup);
-      process.once('SIGINT', cleanup);
+      process.once('exit', handleProcessExit);
+      process.once('SIGTERM', handleProcessExit);
+      process.once('SIGINT', handleProcessExit);
+
+      const cleanup = () => {
+        process.removeListener('exit', handleProcessExit);
+        process.removeListener('SIGTERM', handleProcessExit);
+        process.removeListener('SIGINT', handleProcessExit);
+      };
+
+      let resolved = false;
+      const resolveOnce = (result: ParsedBuildResults) => {
+        if (resolved) {
+          return;
+        }
+        resolved = true;
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+        cleanup();
+        resolve(result);
+      };
+
+      const timeoutMs = options.timeoutMs ?? 0;
+      const timeoutId =
+        timeoutMs > 0
+          ? setTimeout(() => {
+              Logger.warn(
+                `XCLogParser issues reporter exceeded ${timeoutMs}ms, aborting parse for ${logPath}`,
+              );
+              handleProcessExit();
+              resolveOnce({
+                errors: [
+                  `XCLogParser did not finish within ${Math.round(timeoutMs / 1000)}s while parsing ${logPath}.`,
+                  'Open the log in Xcode for full details.',
+                ],
+                warnings: [],
+              });
+            }, timeoutMs)
+          : undefined;
       
       command.stdout?.on('data', (data: Buffer) => {
         stdout += data.toString();
@@ -315,10 +356,13 @@ export class BuildLogParser {
       });
       
       command.on('close', async (code: number | null) => {
-        // Remove cleanup handlers once process closes
-        process.removeListener('exit', cleanup);
-        process.removeListener('SIGTERM', cleanup);
-        process.removeListener('SIGINT', cleanup);
+        if (resolved) {
+          return;
+        }
+        cleanup();
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
         if (code !== 0) {
           const errorMessage = stderr.trim() || 'No error details available';
           
@@ -334,14 +378,14 @@ export class BuildLogParser {
               Logger.debug(`Retrying in ${delays[retryCount]}ms...`);
               
               setTimeout(async () => {
-                const result = await this.parseBuildLog(logPath, retryCount + 1, maxRetries);
-                resolve(result);
+                const result = await this.parseBuildLog(logPath, retryCount + 1, maxRetries, options);
+                resolveOnce(result);
               }, delays[retryCount]!);
               return;
             }
             
             Logger.error('xclogparser failed:', stderr);
-            resolve({
+            resolveOnce({
               errors: [
                 'XCLogParser failed to parse the build log.',
                 '',
@@ -464,11 +508,11 @@ export class BuildLogParser {
             buildResult.errors = dedupeIssues(deferredFallbackMessages);
           }
 
-          resolve(buildResult);
+          resolveOnce(buildResult);
         } catch (parseError) {
           const errorMessage = parseError instanceof Error ? parseError.message : String(parseError);
           Logger.error('Failed to parse xclogparser output:', parseError);
-          resolve({
+          resolveOnce({
             errors: [
               'Failed to parse XCLogParser JSON output.',
               '',
@@ -485,8 +529,15 @@ export class BuildLogParser {
       });
       
       command.on('error', (err: Error) => {
+        if (resolved) {
+          return;
+        }
+        cleanup();
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
         Logger.error('Failed to run xclogparser:', err);
-        resolve({
+        resolveOnce({
           errors: [
             'XCLogParser is required to parse Xcode build logs but is not installed.',
             '',

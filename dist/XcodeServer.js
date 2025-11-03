@@ -1,5 +1,10 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError, } from '@modelcontextprotocol/sdk/types.js';
+import { readFile, stat } from 'fs/promises';
+import { execFile } from 'child_process';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+import { promisify } from 'util';
 import { BuildTools } from './tools/BuildTools.js';
 import { ProjectTools } from './tools/ProjectTools.js';
 import { InfoTools } from './tools/InfoTools.js';
@@ -17,10 +22,13 @@ export class XcodeServer {
     includeClean;
     preferredScheme;
     preferredXcodeproj;
+    testJobs;
+    testJobRetentionMs = 15 * 60 * 1000; // 15 minutes
     constructor(options = {}) {
         this.includeClean = options.includeClean ?? true;
         this.preferredScheme = options.preferredScheme;
         this.preferredXcodeproj = options.preferredXcodeproj;
+        this.testJobs = new Map();
         // Log preferred values if set
         if (this.preferredScheme) {
             Logger.info(`Using preferred scheme: ${this.preferredScheme}`);
@@ -289,7 +297,13 @@ export class XcodeServer {
                 // Handle health check tool first (no environment validation needed)
                 if (name === 'xcode_health_check') {
                     const report = await EnvironmentValidator.createHealthCheckReport();
-                    return { content: [{ type: 'text', text: report }] };
+                    const versionInfo = await this.getVersionInfo();
+                    return {
+                        content: [
+                            { type: 'text', text: report },
+                            ...(versionInfo.content ?? []),
+                        ],
+                    };
                 }
                 // Validate environment for all other tools
                 const validationError = await this.validateToolOperation(name);
@@ -347,46 +361,15 @@ export class XcodeServer {
                             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
                         }
                         return await BuildTools.clean(args.xcodeproj, this.openProject.bind(this));
-                    case 'xcode_test':
-                        if (!args.xcodeproj) {
-                            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj\n\n💡 To fix this:\n• Specify the absolute path to your .xcodeproj or .xcworkspace file using the "xcodeproj" parameter\n• Example: /Users/username/MyApp/MyApp.xcodeproj\n• You can drag the project file from Finder to get the path`);
+                    case 'xcode_test': {
+                        const request = this.prepareTestRequest(args);
+                        return this.startAsyncTestJob(request);
+                    }
+                    case 'xcode_test_status':
+                        if (!args.job_id || typeof args.job_id !== 'string') {
+                            return { content: [{ type: 'text', text: 'Error: job_id parameter is required' }] };
                         }
-                        if (!args.destination) {
-                            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: destination\n\n💡 To fix this:\n• Specify the test destination (e.g., "iPhone 15 Pro Simulator")\n• Use 'get-run-destinations' to see available destinations\n• Example: "iPad Air Simulator" or "iPhone 16 Pro"`);
-                        }
-                        const testOptions = {};
-                        if (args.test_plan_path)
-                            testOptions.testPlanPath = args.test_plan_path;
-                        if (args.selected_tests)
-                            testOptions.selectedTests = args.selected_tests;
-                        if (args.selected_test_classes)
-                            testOptions.selectedTestClasses = args.selected_test_classes;
-                        if (args.test_target_identifier)
-                            testOptions.testTargetIdentifier = args.test_target_identifier;
-                        if (args.test_target_name)
-                            testOptions.testTargetName = args.test_target_name;
-                        // Fallback: if no test plan provided, convert selected tests to -only-testing arguments
-                        if ((!args.test_plan_path || (Array.isArray(args.test_plan_path) && args.test_plan_path.length === 0)) && args.selected_tests) {
-                            const selectedTestsArray = Array.isArray(args.selected_tests)
-                                ? args.selected_tests
-                                : [String(args.selected_tests)];
-                            const existingArgs = Array.isArray(args.command_line_arguments)
-                                ? [...args.command_line_arguments]
-                                : [];
-                            selectedTestsArray.forEach(test => {
-                                if (test && typeof test === 'string') {
-                                    const trimmed = test.trim();
-                                    if (trimmed.length > 0) {
-                                        existingArgs.push(`-only-testing:${trimmed}`);
-                                    }
-                                }
-                            });
-                            args.command_line_arguments = existingArgs;
-                            Logger.debug(`Converted selected tests to command line arguments: ${existingArgs.join(' ')}`);
-                        }
-                        Logger.debug(`Computed testOptions keys: ${Object.keys(testOptions).join(',')}`);
-                        BuildTools.setPendingTestOptions(testOptions);
-                        return await BuildTools.test(args.xcodeproj, args.destination, args.command_line_arguments || [], this.openProject.bind(this), testOptions);
+                        return this.getTestJobStatus(args.job_id);
                     case 'xcode_build_and_run':
                         if (!args.xcodeproj) {
                             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
@@ -669,7 +652,13 @@ export class XcodeServer {
             // Handle health check tool first (no environment validation needed)
             if (name === 'xcode_health_check') {
                 const report = await EnvironmentValidator.createHealthCheckReport();
-                return { content: [{ type: 'text', text: report }] };
+                const versionInfo = await this.getVersionInfo();
+                return {
+                    content: [
+                        { type: 'text', text: report },
+                        ...(versionInfo.content ?? []),
+                    ],
+                };
             }
             Logger.debug(`callToolDirect: ${name} args = ${JSON.stringify(args)}`);
             // Validate environment for all other tools
@@ -726,47 +715,15 @@ export class XcodeServer {
                         throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
                     }
                     return await BuildTools.clean(args.xcodeproj, this.openProject.bind(this));
-                case 'xcode_test':
-                    if (!args.xcodeproj) {
-                        throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj\n\n💡 To fix this:\n• Specify the absolute path to your .xcodeproj or .xcworkspace file using the "xcodeproj" parameter\n• Example: /Users/username/MyApp/MyApp.xcodeproj\n• You can drag the project file from Finder to get the path`);
+                case 'xcode_test': {
+                    const request = this.prepareTestRequest(args);
+                    return this.startAsyncTestJob(request);
+                }
+                case 'xcode_test_status':
+                    if (!args.job_id || typeof args.job_id !== 'string') {
+                        throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: job_id`);
                     }
-                    if (!args.destination) {
-                        throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: destination\n\n💡 To fix this:\n• Specify the test destination (e.g., "iPhone 15 Pro Simulator")\n• Use 'get-run-destinations' to see available destinations\n• Example: "iPad Air Simulator" or "iPhone 16 Pro"`);
-                    }
-                    {
-                        const testOptions = {};
-                        if (args.test_plan_path)
-                            testOptions.testPlanPath = args.test_plan_path;
-                        if (args.selected_tests)
-                            testOptions.selectedTests = args.selected_tests;
-                        if (args.selected_test_classes)
-                            testOptions.selectedTestClasses = args.selected_test_classes;
-                        if (args.test_target_identifier)
-                            testOptions.testTargetIdentifier = args.test_target_identifier;
-                        if (args.test_target_name)
-                            testOptions.testTargetName = args.test_target_name;
-                        if ((!args.test_plan_path || (Array.isArray(args.test_plan_path) && args.test_plan_path.length === 0)) && args.selected_tests) {
-                            const selectedTestsArray = Array.isArray(args.selected_tests)
-                                ? args.selected_tests
-                                : [String(args.selected_tests)];
-                            const existingArgs = Array.isArray(args.command_line_arguments)
-                                ? [...args.command_line_arguments]
-                                : [];
-                            selectedTestsArray.forEach(test => {
-                                if (test && typeof test === 'string') {
-                                    const trimmed = test.trim();
-                                    if (trimmed.length > 0) {
-                                        existingArgs.push(`-only-testing:${trimmed}`);
-                                    }
-                                }
-                            });
-                            args.command_line_arguments = existingArgs;
-                            Logger.debug(`Converted selected tests to command line arguments: ${existingArgs.join(' ')}`);
-                        }
-                        Logger.debug(`Computed testOptions keys (fallback switch): ${Object.keys(testOptions).join(',')}`);
-                        BuildTools.setPendingTestOptions(testOptions);
-                        return await BuildTools.test(args.xcodeproj, args.destination, args.command_line_arguments || [], this.openProject.bind(this), testOptions);
-                    }
+                    return this.getTestJobStatus(args.job_id);
                 case 'xcode_build_and_run':
                     if (!args.xcodeproj) {
                         throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
@@ -931,6 +888,318 @@ export class XcodeServer {
                     }]
             };
         }
+    }
+    cloneTestOptions(source) {
+        if (!source) {
+            return undefined;
+        }
+        const cloned = {};
+        if (source.schemeName)
+            cloned.schemeName = source.schemeName;
+        if (source.testPlanPath)
+            cloned.testPlanPath = source.testPlanPath;
+        if (source.testTargetIdentifier)
+            cloned.testTargetIdentifier = source.testTargetIdentifier;
+        if (source.testTargetName)
+            cloned.testTargetName = source.testTargetName;
+        if (source.deviceType)
+            cloned.deviceType = source.deviceType;
+        if (source.osVersion)
+            cloned.osVersion = source.osVersion;
+        if (source.selectedTests)
+            cloned.selectedTests = [...source.selectedTests];
+        if (source.selectedTestClasses)
+            cloned.selectedTestClasses = [...source.selectedTestClasses];
+        return cloned;
+    }
+    prepareTestRequest(args) {
+        if (!args.xcodeproj || typeof args.xcodeproj !== 'string') {
+            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj\n\n💡 Provide the absolute path to your .xcodeproj or .xcworkspace file.`);
+        }
+        const projectPath = args.xcodeproj;
+        const schemeFromArgs = typeof args.scheme === 'string' ? args.scheme.trim() : '';
+        const schemeName = schemeFromArgs || (this.preferredScheme ? this.preferredScheme.trim() : '');
+        if (!schemeName) {
+            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: scheme\n\n💡 Pass --scheme <SchemeName> or set XCODE_MCP_PREFERRED_SCHEME.`);
+        }
+        const hasDestination = typeof args.destination === 'string' && args.destination.trim().length > 0;
+        const hasDeviceType = typeof args.device_type === 'string' && args.device_type.trim().length > 0;
+        if (!hasDestination && !hasDeviceType) {
+            throw new McpError(ErrorCode.InvalidParams, `Missing required parameters. Provide either:\n• destination (e.g., "platform=iOS Simulator,name=iPhone 16")\n• or device_type with os_version (e.g., device_type="iphone" os_version="18.0").`);
+        }
+        const destination = hasDestination ? args.destination.trim() : null;
+        const commandLineArguments = [];
+        if (Array.isArray(args.command_line_arguments)) {
+            args.command_line_arguments.forEach(value => {
+                const str = typeof value === 'string' ? value.trim() : String(value);
+                if (str.length > 0) {
+                    commandLineArguments.push(str);
+                }
+            });
+        }
+        else if (typeof args.command_line_arguments === 'string') {
+            const trimmed = args.command_line_arguments.trim();
+            if (trimmed.length > 0) {
+                commandLineArguments.push(trimmed);
+            }
+        }
+        const options = { schemeName };
+        if (hasDeviceType) {
+            options.deviceType = args.device_type.trim();
+        }
+        if (typeof args.os_version === 'string' && args.os_version.trim().length > 0) {
+            options.osVersion = args.os_version.trim();
+        }
+        if (typeof args.test_plan_path === 'string' && args.test_plan_path.trim().length > 0) {
+            options.testPlanPath = args.test_plan_path.trim();
+        }
+        if (typeof args.test_target_identifier === 'string' && args.test_target_identifier.trim().length > 0) {
+            options.testTargetIdentifier = args.test_target_identifier.trim();
+        }
+        if (typeof args.test_target_name === 'string' && args.test_target_name.trim().length > 0) {
+            options.testTargetName = args.test_target_name.trim();
+        }
+        const normalizeStringArray = (value) => {
+            if (Array.isArray(value)) {
+                const mapped = value
+                    .map(entry => (typeof entry === 'string' ? entry.trim() : String(entry).trim()))
+                    .filter(str => str.length > 0);
+                return mapped.length > 0 ? mapped : undefined;
+            }
+            if (typeof value === 'string') {
+                const trimmed = value.trim();
+                return trimmed.length > 0 ? [trimmed] : undefined;
+            }
+            return undefined;
+        };
+        const selectedTests = normalizeStringArray(args.selected_tests);
+        if (selectedTests) {
+            options.selectedTests = selectedTests;
+        }
+        const selectedClasses = normalizeStringArray(args.selected_test_classes);
+        if (selectedClasses) {
+            options.selectedTestClasses = selectedClasses;
+        }
+        const request = {
+            projectPath,
+            destination,
+            commandLineArguments,
+            options,
+        };
+        return request;
+    }
+    async getVersionInfo() {
+        const moduleDir = dirname(fileURLToPath(import.meta.url));
+        const projectRoot = join(moduleDir, '..');
+        let packageVersion = 'unknown';
+        try {
+            const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf-8'));
+            if (packageJson && typeof packageJson.version === 'string') {
+                packageVersion = packageJson.version;
+            }
+        }
+        catch (error) {
+            Logger.warn(`Unable to read package.json for version info: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        let gitDescription = null;
+        try {
+            const execFileAsync = promisify(execFile);
+            const { stdout } = await execFileAsync('git', ['describe', '--tags', '--dirty', '--always'], {
+                cwd: projectRoot,
+                timeout: 2000,
+            });
+            const trimmed = stdout.trim();
+            if (trimmed.length > 0) {
+                gitDescription = trimmed;
+            }
+        }
+        catch (error) {
+            Logger.debug(`git describe unavailable for version info: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        const keyArtifacts = [
+            join(projectRoot, 'dist', 'XcodeServer.js'),
+            join(projectRoot, 'dist', 'tools', 'BuildTools.js'),
+            join(projectRoot, 'dist', 'tools', 'XCResultTools.js'),
+        ];
+        let latestModified = null;
+        for (const artifact of keyArtifacts) {
+            try {
+                const stats = await stat(artifact);
+                if (!latestModified || stats.mtime > latestModified) {
+                    latestModified = stats.mtime;
+                }
+            }
+            catch (error) {
+                Logger.debug(`Version info: could not stat ${artifact}: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        }
+        return {
+            content: [
+                {
+                    type: 'text',
+                    text: [
+                        '📦 XcodeMCP Version Information',
+                        '=============================='
+                    ].join('\n'),
+                },
+                {
+                    type: 'text',
+                    text: `Package version: ${packageVersion}`,
+                },
+                ...(gitDescription
+                    ? [{ type: 'text', text: `Git describe: ${gitDescription}` }]
+                    : []),
+                ...(latestModified
+                    ? [{
+                            type: 'text',
+                            text: `Latest build artifact modified: ${latestModified.toLocaleString()}`,
+                        }]
+                    : []),
+                {
+                    type: 'text',
+                    text: `Server root: ${projectRoot}`,
+                },
+            ],
+        };
+    }
+    cleanupExpiredJobs() {
+        const now = Date.now();
+        for (const [jobId, job] of this.testJobs.entries()) {
+            if (job.status !== 'running' && now - job.updatedAt > this.testJobRetentionMs) {
+                this.testJobs.delete(jobId);
+                Logger.debug(`Cleaned up completed test job ${jobId} (age ${(now - job.updatedAt) / 1000}s).`);
+            }
+        }
+    }
+    startAsyncTestJob(request) {
+        this.cleanupExpiredJobs();
+        const jobId = `${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 10)}`;
+        const optionsCopy = this.cloneTestOptions(request.options);
+        const storedRequest = {
+            projectPath: request.projectPath,
+            destination: request.destination,
+            commandLineArguments: [...request.commandLineArguments],
+        };
+        const storedOptions = this.cloneTestOptions(optionsCopy);
+        if (storedOptions) {
+            storedRequest.options = storedOptions;
+        }
+        const jobRecord = {
+            status: 'running',
+            startedAt: Date.now(),
+            updatedAt: Date.now(),
+            lastAccessed: Date.now(),
+            request: storedRequest,
+        };
+        this.testJobs.set(jobId, jobRecord);
+        const openProject = this.openProject.bind(this);
+        setImmediate(async () => {
+            try {
+                const runOptions = this.cloneTestOptions(optionsCopy);
+                if (runOptions && Object.keys(runOptions).length > 0) {
+                    BuildTools.setPendingTestOptions(runOptions);
+                }
+                const result = await BuildTools.test(request.projectPath, request.destination, [...request.commandLineArguments], openProject, runOptions);
+                const job = this.testJobs.get(jobId);
+                if (job) {
+                    job.status = 'succeeded';
+                    job.result = result;
+                    job.updatedAt = Date.now();
+                    job.completedAt = job.updatedAt;
+                    job.lastAccessed = job.updatedAt;
+                }
+            }
+            catch (error) {
+                const job = this.testJobs.get(jobId);
+                if (job) {
+                    job.status = 'failed';
+                    job.error = error instanceof Error ? error.message : String(error);
+                    job.updatedAt = Date.now();
+                    job.completedAt = job.updatedAt;
+                    job.lastAccessed = job.updatedAt;
+                }
+            }
+        });
+        return {
+            content: [
+                {
+                    type: 'text',
+                    text: `🟡 TEST JOB STARTED\n\nJob ID: ${jobId}\nStarted: ${new Date(jobRecord.startedAt).toLocaleString()}\nDestination: ${request.destination ?? request.options?.deviceType ?? 'auto-selected'}\n\nPoll with xcode_test_status --job-id ${jobId}.`,
+                },
+            ],
+            _meta: {
+                job_id: jobId,
+                status: 'running',
+                started_at: jobRecord.startedAt,
+                destination: request.destination ?? request.options?.deviceType ?? 'auto-selected',
+            },
+        };
+    }
+    getTestJobStatus(jobId) {
+        this.cleanupExpiredJobs();
+        const job = this.testJobs.get(jobId);
+        if (!job) {
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: `❌ No test job found with ID '${jobId}'. It may have completed and been collected.`,
+                    },
+                ],
+                isError: true,
+                _meta: {
+                    job_id: jobId,
+                    status: 'unknown',
+                },
+            };
+        }
+        job.lastAccessed = Date.now();
+        if (job.status === 'running') {
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: `🟡 TEST IN PROGRESS\n\nJob ID: ${jobId}\nStarted: ${new Date(job.startedAt).toLocaleString()}\nLast update: ${new Date(job.updatedAt).toLocaleString()}.`,
+                    },
+                ],
+                _meta: {
+                    job_id: jobId,
+                    status: 'running',
+                    started_at: job.startedAt,
+                    updated_at: job.updatedAt,
+                },
+            };
+        }
+        if (job.status === 'succeeded' && job.result) {
+            const combinedContent = job.result.content ? [...job.result.content] : [];
+            job.resultRetrieved = true;
+            return {
+                content: combinedContent,
+                isError: job.result.isError,
+                _meta: {
+                    job_id: jobId,
+                    status: 'succeeded',
+                    started_at: job.startedAt,
+                    completed_at: job.completedAt ?? job.updatedAt,
+                },
+            };
+        }
+        const failureMessage = job.error ?? 'Unknown error';
+        return {
+            content: [
+                {
+                    type: 'text',
+                    text: `❌ Test job ${jobId} failed: ${failureMessage}\nStarted: ${new Date(job.startedAt).toLocaleString()}\nFinished: ${new Date(job.updatedAt).toLocaleString()}.`,
+                },
+            ],
+            isError: true,
+            _meta: {
+                job_id: jobId,
+                status: 'failed',
+                started_at: job.startedAt,
+                completed_at: job.completedAt ?? job.updatedAt,
+            },
+        };
     }
 }
 //# sourceMappingURL=XcodeServer.js.map

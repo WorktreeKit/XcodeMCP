@@ -10,6 +10,8 @@ export declare class XcodeServer {
     private includeClean;
     private preferredScheme;
     private preferredXcodeproj;
+    private readonly testJobs;
+    private readonly testJobRetentionMs;
     constructor(options?: {
         includeClean?: boolean;
         preferredScheme?: string;
@@ -59,5 +61,11 @@ export declare class XcodeServer {
      * This is used by the CLI to bypass the JSON-RPC layer
      */
     callToolDirect(name: string, args?: Record<string, unknown>): Promise<CallToolResult>;
+    private cloneTestOptions;
+    private prepareTestRequest;
+    private getVersionInfo;
+    private cleanupExpiredJobs;
+    private startAsyncTestJob;
+    private getTestJobStatus;
 }
 //# sourceMappingURL=XcodeServer.d.ts.map

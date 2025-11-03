@@ -125,7 +125,15 @@ export function getToolDefinitions(options: {
           },
           destination: {
             type: 'string',
-            description: 'Test destination (required for predictable test environments) - e.g., "iPhone 15 Pro Simulator", "iPad Air Simulator"',
+            description: 'Explicit xcodebuild destination string (e.g., "platform=iOS Simulator,name=iPhone 16"). Optional when device_type/os_version are supplied.',
+          },
+          device_type: {
+            type: 'string',
+            description: 'High-level device family to target (e.g., iphone, ipad, mac, watch, tv, vision). When provided, os_version is recommended.',
+          },
+          os_version: {
+            type: 'string',
+            description: 'Desired OS version for the selected device family (e.g., 18.0, 26.0). Used with device_type.',
           },
           command_line_arguments: {
             type: 'array',
@@ -154,8 +162,31 @@ export function getToolDefinitions(options: {
             type: 'string',
             description: 'Optional: Target name for the test target (alternative to test_target_identifier). Example: "TestAppTests".',
           },
+          scheme: {
+            type: 'string',
+            description: preferredScheme
+              ? `Name of the test scheme - defaults to ${preferredScheme}`
+              : 'Name of the test scheme to run',
+          },
         },
-        required: preferredXcodeproj ? ['destination'] : ['xcodeproj', 'destination'],
+        required: [
+          ...(!preferredXcodeproj ? ['xcodeproj'] : []),
+          ...(!preferredScheme ? ['scheme'] : [])
+        ],
+      },
+    },
+    {
+      name: 'xcode_test_status',
+      description: 'Check the status of an asynchronous test job started via xcode_test.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          job_id: {
+            type: 'string',
+            description: 'Job identifier returned by xcode_test.',
+          },
+        },
+        required: ['job_id'],
       },
     },
     {

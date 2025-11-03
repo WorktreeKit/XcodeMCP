@@ -446,13 +446,14 @@ export class XCResultParser {
       const extractTests = (nodes: any[], depth = 0) => {
         for (const node of nodes) {
           // Only include actual test methods (not test classes/suites)
-          if (node.nodeType === 'Test Case' && node.name && node.result) {
+          const normalizedResult = this.normalizeResult(node.result);
+          if (node.nodeType === 'Test Case' && node.name && normalizedResult) {
             const testInfo = {
               name: node.name,
               id: node.nodeIdentifier || 'unknown'
             };
-            
-            const result = node.result.toLowerCase();
+
+            const result = normalizedResult.toLowerCase();
             if (result === 'failed') {
               failedTests.push(testInfo);
             } else if (result === 'passed') {
@@ -701,7 +702,8 @@ export class XCResultParser {
     output += `Name: ${testNode.name}\n`;
     output += `ID: ${testNode.nodeIdentifier || 'unknown'}\n`;
     output += `Type: ${testNode.nodeType}\n`;
-    output += `Result: ${this.getStatusIcon(testNode.result)} ${testNode.result}\n`;
+    const testResultDisplay = this.normalizeResult(testNode.result) || 'Unknown';
+    output += `Result: ${this.getStatusIcon(testNode.result)} ${testResultDisplay}\n`;
     
     if (testNode.duration) {
       output += `Duration: ${testNode.duration}\n`;
@@ -709,7 +711,7 @@ export class XCResultParser {
     output += '\n';
     
     // Show failure details if test failed
-    if (testNode.result.toLowerCase().includes('fail')) {
+    if (this.normalizeResult(testNode.result).toLowerCase().includes('fail')) {
       const failure = analysis.summary.testFailures.find(f => f.testIdentifierString === testNode.nodeIdentifier);
       if (failure) {
         output += `❌ Failure Details:\n`;
@@ -1010,9 +1012,10 @@ export class XCResultParser {
     
     if (node.nodeType === 'Test Case') {
       total = 1;
-      if (node.result.toLowerCase().includes('pass') || node.result.toLowerCase().includes('success')) {
+      const lowerResult = this.normalizeResult(node.result).toLowerCase();
+      if (lowerResult.includes('pass') || lowerResult.includes('success')) {
         passed = 1;
-      } else if (node.result.toLowerCase().includes('fail')) {
+      } else if (lowerResult.includes('fail')) {
         failed = 1;
       }
     } else if (node.children) {
@@ -1078,8 +1081,15 @@ export class XCResultParser {
     return search(nodes);
   }
 
-  private getStatusIcon(result: string): string {
-    const lowerResult = result.toLowerCase();
+  private normalizeResult(result: string | null | undefined): string {
+    if (typeof result === 'string') {
+      return result;
+    }
+    return '';
+  }
+
+  private getStatusIcon(result?: string | null): string {
+    const lowerResult = this.normalizeResult(result).toLowerCase();
     if (lowerResult.includes('pass') || lowerResult.includes('success')) {
       return '✅';
     } else if (lowerResult.includes('fail')) {

@@ -182,15 +182,15 @@ describe('Preferred Values', () => {
     });
 
     it('should correctly build required array for xcode_test', () => {
-      // No preferred values - xcodeproj and destination required
+      // No preferred values - xcodeproj and scheme required
       let tools = getToolDefinitions({});
       let testTool = tools.find(t => t.name === 'xcode_test');
-      expect(testTool!.inputSchema.required).toEqual(['xcodeproj', 'destination']);
+      expect(testTool!.inputSchema.required).toEqual(['xcodeproj', 'scheme']);
 
-      // With preferred xcodeproj - only destination required
+      // With preferred xcodeproj - only scheme required
       tools = getToolDefinitions({ preferredXcodeproj: 'MyApp.xcodeproj' });
       testTool = tools.find(t => t.name === 'xcode_test');
-      expect(testTool!.inputSchema.required).toEqual(['destination']);
+      expect(testTool!.inputSchema.required).toEqual(['scheme']);
     });
 
     it('should correctly handle xcode_set_active_scheme', () => {
