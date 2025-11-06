@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { Logger } from '../utils/Logger.js';
+import Logger from '../utils/Logger.js';
 import { EventEmitter } from 'events';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';

@@ -1,6 +1,6 @@
 import { existsSync } from 'fs';
 import path from 'path';
-import { ErrorHelper } from './ErrorHelper.js';
+import ErrorHelper from './ErrorHelper.js';
 export class PathValidator {
     /**
      * Resolve relative paths to absolute paths and validate project path
@@ -94,4 +94,5 @@ export class PathValidator {
         return null;
     }
 }
+export default PathValidator;
 //# sourceMappingURL=PathValidator.js.map

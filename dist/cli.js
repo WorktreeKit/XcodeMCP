@@ -4,7 +4,7 @@ import { readFile } from 'fs/promises';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { XcodeServer } from './XcodeServer.js';
-import { Logger } from './utils/Logger.js';
+import Logger from './utils/Logger.js';
 import { getToolDefinitions } from './shared/toolDefinitions.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 /**

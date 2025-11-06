@@ -5,13 +5,13 @@ import { tmpdir, homedir } from 'os';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { JXAExecutor } from '../utils/JXAExecutor.js';
 import { BuildLogParser } from '../utils/BuildLogParser.js';
-import { PathValidator } from '../utils/PathValidator.js';
-import { ErrorHelper } from '../utils/ErrorHelper.js';
+import PathValidator from '../utils/PathValidator.js';
+import ErrorHelper from '../utils/ErrorHelper.js';
 import { ParameterNormalizer } from '../utils/ParameterNormalizer.js';
-import { Logger } from '../utils/Logger.js';
+import Logger from '../utils/Logger.js';
 import { XCResultParser } from '../utils/XCResultParser.js';
 import { getWorkspaceByPathScript } from '../utils/JXAHelpers.js';
-import type { BuildLogInfo, McpResult, OpenProjectCallback } from '../types/index.js';
+import type { BuildLogInfo, McpResult, OpenProjectCallback, ParsedBuildResults } from '../types/index.js';
 
 const FAILURE_STATUS_TOKENS = ['fail', 'error', 'cancel', 'terminate', 'abort'];
 
@@ -911,15 +911,26 @@ export class BuildTools {
     await this._handleReplaceExistingBuildAlert();
 
     // Monitor run completion using AppleScript instead of build log detection
-    Logger.info(`Monitoring run completion using AppleScript for action ID: ${actionId}`);
     const maxRunTime = 3600000; // 1 hour safety timeout
+    const runMonitorTimeoutMs = 50000; // exit early to avoid MCP call timeout
     const runStartTime = Date.now();
+    const checkIntervalMs = 3000;
+    const runningConfirmationMs = 6000;
+    Logger.info(
+      `Monitoring run completion using AppleScript for action ID: ${actionId} (interval=${checkIntervalMs}ms, running confirmation=${runningConfirmationMs}ms, guardrail=${runMonitorTimeoutMs}ms)`,
+    );
     let runCompleted = false;
-    let monitoringSeconds = 0;
+    let monitoringElapsedMs = 0;
+    let runningObservedAt: number | null = null;
+    let monitoringAbortedForTimeout = false;
+    let lastStatus: string | null = null;
+    let lastCompleted: string | null = null;
+    let iteration = 0;
     
     while (!runCompleted && (Date.now() - runStartTime) < maxRunTime) {
       try {
-        // Check run completion via AppleScript every 10 seconds
+        iteration += 1;
+        // Check run completion via AppleScript at the configured interval
         const checkScript = `
           (function() {
             ${getWorkspaceByPathScript(projectPath)}
@@ -938,12 +949,27 @@ export class BuildTools {
           })()
         `;
         
-        const result = await JXAExecutor.execute(checkScript, 15000);
-        const [status, completed] = result.split(':');
+        const result = await JXAExecutor.execute(checkScript, 10000);
+        const parts = result.split(':');
+        const status = parts[0] ?? 'unknown';
+        const completed: string | null = parts.length > 1 ? (parts[1] ?? '') : null;
+        if (result === 'No workspace') {
+          Logger.warn(`Run monitoring iteration ${iteration}: workspace not available yet.`);
+        } else if (result === 'Action not found') {
+          Logger.debug(`Run monitoring iteration ${iteration}: action ${actionId} not visible yet.`);
+        }
         
-        // Log progress every 2 minutes
-        if (monitoringSeconds % 120 === 0) {
-          Logger.info(`Run monitoring: ${Math.floor(monitoringSeconds/60)}min - Action ${actionId}: status=${status}, completed=${completed}`);
+        // Emit a log whenever status changes or every 2 minutes
+        if (status !== lastStatus || completed !== lastCompleted) {
+          Logger.info(
+            `Run status update after ${Math.round((Date.now() - runStartTime) / 1000)}s: action=${actionId}, status=${status}, completed=${completed ?? 'n/a'}`,
+          );
+          lastStatus = status;
+          lastCompleted = completed;
+        } else if ((monitoringElapsedMs % 120000) === 0) {
+          Logger.info(
+            `Run status heartbeat at ${Math.floor(monitoringElapsedMs / 60000)}min: action=${actionId}, status=${status}, completed=${completed ?? 'n/a'}`,
+          );
         }
         
         // For run actions, we need different completion logic than build/test
@@ -951,29 +977,65 @@ export class BuildTools {
         if (completed === 'true' && (status === 'failed' || status === 'cancelled' || status === 'error occurred')) {
           // Run failed/cancelled - this is a true completion
           runCompleted = true;
-          Logger.info(`Run completed after ${Math.floor(monitoringSeconds/60)} minutes: status=${status}`);
+          Logger.info(
+            `Run completed after ${Math.floor(monitoringElapsedMs / 60000)} minutes: status=${status}`,
+          );
           break;
-        } else if (status === 'running' && monitoringSeconds >= 60) {
-          // If still running after 60 seconds, assume the app launched successfully
-          // We'll check for build errors in the log parsing step
-          runCompleted = true;
-          Logger.info(`Run appears successful after ${Math.floor(monitoringSeconds/60)} minutes (app likely launched)`);
-          break;
+        } else if (status === 'running') {
+          if (!runningObservedAt) {
+            runningObservedAt = Date.now();
+            Logger.info('Run reported status "running"; waiting briefly to confirm app launch.');
+          } else if ((Date.now() - runningObservedAt) >= runningConfirmationMs) {
+            // Assume the app launched successfully once we've seen "running" for long enough
+            runCompleted = true;
+            const elapsedMs = Date.now() - runStartTime;
+            Logger.info(`Run appears successful after ${Math.round(elapsedMs / 1000)}s (status stayed 'running' for ~${Math.round((Date.now() - runningObservedAt) / 1000)}s)`);
+            break;
+          }
         } else if (status === 'succeeded') {
           // This might happen briefly during transition, wait a bit more
           Logger.info(`Run status shows 'succeeded', waiting to see if it transitions to 'running'...`);
+        } else {
+          runningObservedAt = null;
         }
         
       } catch (error) {
-        Logger.warn(`Run monitoring error at ${Math.floor(monitoringSeconds/60)}min: ${error instanceof Error ? error.message : error}`);
+        Logger.warn(
+          `Run monitoring error at ${Math.floor(monitoringElapsedMs / 60000)}min: ${
+            error instanceof Error ? error.message : error
+          }`,
+        );
+      }
+
+      if (!runCompleted && (Date.now() - runStartTime) >= runMonitorTimeoutMs) {
+        monitoringAbortedForTimeout = true;
+        Logger.warn(
+          `Run monitoring exceeded 50s guardrail – returning early to avoid MCP timeout (last status: ${lastStatus ?? 'unknown'}, completed=${lastCompleted ?? 'n/a'})`,
+        );
+        break;
       }
       
-      // Wait 10 seconds before next check
-      await new Promise(resolve => setTimeout(resolve, 10000));
-      monitoringSeconds += 10;
+      // Wait before next check
+      await new Promise(resolve => setTimeout(resolve, checkIntervalMs));
+      monitoringElapsedMs += checkIntervalMs;
     }
     
     if (!runCompleted) {
+      if (monitoringAbortedForTimeout) {
+        Logger.warn(
+          `Run monitoring exited early after ${Math.round((Date.now() - runStartTime) / 1000)}s (status=${lastStatus ?? 'unknown'}, completed=${lastCompleted ?? 'n/a'})`,
+        );
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `${runResult}\n\n⏳ Run is still in progress after approximately ${
+              Math.round((Date.now() - runStartTime) / 1000)
+              } seconds (last known status: ${lastStatus ?? 'unknown'}, completed=${lastCompleted ?? 'n/a'}).\n\nThe app should keep launching in Xcode/Simulator. Check Xcode's report navigator for the final build status or rerun this command once the launch completes.`,
+            },
+          ],
+        };
+      }
       Logger.warn('Run monitoring reached 1-hour timeout - proceeding anyway');
     }
     // Now find the build log that was created during this run
@@ -1010,9 +1072,75 @@ export class BuildTools {
     }
     
     Logger.info(`Run completed, parsing build log: ${newLog.path}`);
-    const results = await BuildLogParser.parseBuildLog(newLog.path);
+
+    const parseStart = Date.now();
+    const parseTimeoutMs = 20000;
+    let parseTimedOut = false;
+    let parseError: unknown = null;
+    let results: ParsedBuildResults | null = null;
+
+    const parsePromise = BuildLogParser.parseBuildLog(newLog.path);
+
+    parsePromise.catch(error => {
+      parseError = error;
+      Logger.error(`Build log parsing failed: ${error instanceof Error ? error.message : error}`);
+    });
+
+    try {
+      results = await Promise.race<ParsedBuildResults | null>([
+        parsePromise,
+        new Promise(resolve => {
+          setTimeout(() => {
+            parseTimedOut = true;
+            resolve(null);
+          }, parseTimeoutMs);
+        }),
+      ]);
+    } catch (error) {
+      parseError = error;
+      Logger.warn(
+        `Build log parsing threw an error after ${Math.round((Date.now() - parseStart) / 1000)}s: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+    }
+
+    if (parseTimedOut) {
+      Logger.warn(
+        `Build log parsing exceeded ${parseTimeoutMs / 1000}s guardrail for ${newLog.path}; returning early while parsing continues in background.`,
+      );
+      void parsePromise
+        .then(finalResult => {
+          Logger.info(
+            `Deferred build log parse completed after ${Math.round((Date.now() - parseStart) / 1000)}s - errors=${finalResult.errors.length}, warnings=${finalResult.warnings.length}`,
+          );
+        })
+        .catch(err => {
+          Logger.warn(
+            `Deferred build log parse failed: ${err instanceof Error ? err.message : err}`,
+          );
+        });
+    } else if (results) {
+      Logger.info(
+        `Build log parsed in ${Math.round((Date.now() - parseStart) / 1000)}s - errors=${results.errors.length}, warnings=${results.warnings.length}`,
+      );
+    }
     
     let message = `${runResult}\n\n`;
+    if (!results) {
+      if (parseTimedOut) {
+        message += '⏳ Build log parsing is still in progress (took longer than 20 seconds).\n\n';
+        message += `Open the log in Xcode for full details:\n  • ${newLog.path}`;
+      } else {
+        message += '⚠️ Unable to summarize the build log automatically.\n\n';
+        if (parseError instanceof Error) {
+          message += `Reason: ${parseError.message}\n\n`;
+        }
+        message += `You can open the log manually in Xcode:\n  • ${newLog.path}`;
+      }
+      return { content: [{ type: 'text', text: message }] };
+    }
+
     Logger.info(
       `Run build completed - ${results.errors.length} errors, ${results.warnings.length} warnings, status: ${results.buildStatus || 'unknown'}`,
     );
@@ -2042,3 +2170,5 @@ export class BuildTools {
     }
   }
 }
+
+export default BuildTools;

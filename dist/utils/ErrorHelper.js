@@ -99,4 +99,5 @@ export class ErrorHelper {
         return null;
     }
 }
+export default ErrorHelper;
 //# sourceMappingURL=ErrorHelper.js.map

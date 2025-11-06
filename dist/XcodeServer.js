@@ -5,13 +5,16 @@ import { execFile } from 'child_process';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { promisify } from 'util';
-import { BuildTools } from './tools/BuildTools.js';
-import { ProjectTools } from './tools/ProjectTools.js';
-import { InfoTools } from './tools/InfoTools.js';
-import { XCResultTools } from './tools/XCResultTools.js';
-import { PathValidator } from './utils/PathValidator.js';
+import BuildTools from './tools/BuildTools.js';
+import ProjectTools from './tools/ProjectTools.js';
+import InfoTools from './tools/InfoTools.js';
+import XCResultTools from './tools/XCResultTools.js';
+import SimulatorTools from './tools/SimulatorTools.js';
+import SimulatorLogTools from './tools/SimulatorLogTools.js';
+import SimulatorUiTools from './tools/SimulatorUiTools.js';
+import PathValidator from './utils/PathValidator.js';
 import { EnvironmentValidator } from './utils/EnvironmentValidator.js';
-import { Logger } from './utils/Logger.js';
+import Logger from './utils/Logger.js';
 import { getToolDefinitions } from './shared/toolDefinitions.js';
 export class XcodeServer {
     server;
@@ -138,6 +141,31 @@ export class XcodeServer {
         }
         return null; // Operation can proceed
     }
+    parseNumericArg(value, name) {
+        const numeric = typeof value === 'number'
+            ? value
+            : typeof value === 'string'
+                ? Number(value)
+                : Number.NaN;
+        if (!Number.isFinite(numeric)) {
+            throw new McpError(ErrorCode.InvalidParams, `Parameter '${name}' must be a number`);
+        }
+        return numeric;
+    }
+    parseOptionalNumericArg(value, name) {
+        if (value === undefined || value === null) {
+            return undefined;
+        }
+        const numeric = typeof value === 'number'
+            ? value
+            : typeof value === 'string'
+                ? Number(value)
+                : Number.NaN;
+        if (!Number.isFinite(numeric)) {
+            throw new McpError(ErrorCode.InvalidParams, `Parameter '${name}' must be numeric when provided`);
+        }
+        return numeric;
+    }
     /**
      * Determines tool limitations based on environment validation
      */
@@ -149,7 +177,31 @@ export class XcodeServer {
         const buildTools = ['xcode_build', 'xcode_test', 'xcode_build_and_run', 'xcode_debug', 'xcode_clean'];
         const xcodeTools = [...buildTools, 'xcode_open_project', 'xcode_get_schemes', 'xcode_set_active_scheme',
             'xcode_get_run_destinations', 'xcode_get_workspace_info', 'xcode_get_projects'];
+        const simulatorTools = [
+            'list_sims',
+            'boot_sim',
+            'shutdown_sim',
+            'open_sim',
+            'screenshot',
+            'start_sim_log_cap',
+            'stop_sim_log_cap',
+            'describe_ui',
+            'tap',
+            'type_text',
+            'swipe',
+        ];
         const xcresultTools = ['xcresult_browse', 'xcresult_browser_get_console', 'xcresult_summary', 'xcresult_get_screenshot', 'xcresult_get_ui_hierarchy', 'xcresult_get_ui_element', 'xcresult_list_attachments', 'xcresult_export_attachment'];
+        if (simulatorTools.includes(toolName) && !validation.xcode?.valid) {
+            return {
+                blocked: true,
+                degraded: false,
+                reason: 'Xcode Command Line Tools are required for simulator operations',
+                instructions: [
+                    'Install Xcode Command Line Tools: xcode-select --install',
+                    'Ensure the iOS Simulator is installed from Xcode',
+                ],
+            };
+        }
         // Check Xcode availability
         if (xcodeTools.includes(toolName) && !validation.xcode?.valid) {
             return {
@@ -429,6 +481,128 @@ export class XcodeServer {
                             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: file_path`);
                         }
                         return await InfoTools.openFile(args.file_path, args.line_number);
+                    case 'list_sims':
+                        return await SimulatorTools.listSimulators();
+                    case 'boot_sim': {
+                        const simulatorUuid = (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
+                            (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
+                        if (!simulatorUuid) {
+                            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: simulator_uuid`);
+                        }
+                        return await SimulatorTools.bootSimulator(simulatorUuid);
+                    }
+                    case 'open_sim':
+                        return await SimulatorTools.openSimulator();
+                    case 'shutdown_sim': {
+                        const simulatorUuid = (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
+                            (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
+                        if (!simulatorUuid) {
+                            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: simulator_uuid`);
+                        }
+                        return await SimulatorTools.shutdownSimulator(simulatorUuid);
+                    }
+                    case 'screenshot': {
+                        const simulatorUuid = (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
+                            (typeof args.simulatorUuid === 'string' && args.simulatorUuid) ||
+                            undefined;
+                        const savePath = typeof args.save_path === 'string' ? args.save_path : undefined;
+                        return await SimulatorTools.captureScreenshot(simulatorUuid, savePath);
+                    }
+                    case 'start_sim_log_cap': {
+                        const simulatorUuid = (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
+                            (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
+                        if (!simulatorUuid) {
+                            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: simulator_uuid`);
+                        }
+                        const bundleId = (typeof args.bundle_id === 'string' && args.bundle_id) ||
+                            (typeof args.bundleId === 'string' && args.bundleId);
+                        if (!bundleId) {
+                            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: bundle_id`);
+                        }
+                        const captureConsole = typeof args.capture_console === 'boolean'
+                            ? args.capture_console
+                            : typeof args.capture_console === 'string'
+                                ? args.capture_console.toLowerCase() === 'true'
+                                : false;
+                        const extraArgs = Array.isArray(args.command_line_arguments)
+                            ? args.command_line_arguments.filter((item) => typeof item === 'string')
+                            : [];
+                        return await SimulatorLogTools.startLogCapture({
+                            simulatorUuid,
+                            bundleId,
+                            captureConsole,
+                            args: extraArgs,
+                        });
+                    }
+                    case 'stop_sim_log_cap': {
+                        const sessionId = (typeof args.session_id === 'string' && args.session_id) ||
+                            (typeof args.sessionId === 'string' && args.sessionId);
+                        if (!sessionId) {
+                            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: session_id`);
+                        }
+                        return await SimulatorLogTools.stopLogCapture(sessionId);
+                    }
+                    case 'describe_ui': {
+                        const simulatorUuid = (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
+                            (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
+                        if (!simulatorUuid) {
+                            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: simulator_uuid`);
+                        }
+                        return await SimulatorUiTools.describeUI(simulatorUuid);
+                    }
+                    case 'tap': {
+                        const simulatorUuid = (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
+                            (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
+                        if (!simulatorUuid) {
+                            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: simulator_uuid`);
+                        }
+                        const x = this.parseNumericArg(args.x, 'x');
+                        const y = this.parseNumericArg(args.y, 'y');
+                        const preDelay = this.parseOptionalNumericArg(args.pre_delay ?? args.preDelay, 'pre_delay');
+                        const postDelay = this.parseOptionalNumericArg(args.post_delay ?? args.postDelay, 'post_delay');
+                        const tapOptions = {};
+                        if (preDelay !== undefined)
+                            tapOptions.preDelay = preDelay;
+                        if (postDelay !== undefined)
+                            tapOptions.postDelay = postDelay;
+                        return await SimulatorUiTools.tap(simulatorUuid, x, y, tapOptions);
+                    }
+                    case 'type_text': {
+                        const simulatorUuid = (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
+                            (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
+                        if (!simulatorUuid) {
+                            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: simulator_uuid`);
+                        }
+                        if (typeof args.text !== 'string' || args.text.length === 0) {
+                            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: text`);
+                        }
+                        return await SimulatorUiTools.typeText(simulatorUuid, args.text);
+                    }
+                    case 'swipe': {
+                        const simulatorUuid = (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
+                            (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
+                        if (!simulatorUuid) {
+                            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: simulator_uuid`);
+                        }
+                        const x1 = this.parseNumericArg(args.x1, 'x1');
+                        const y1 = this.parseNumericArg(args.y1, 'y1');
+                        const x2 = this.parseNumericArg(args.x2, 'x2');
+                        const y2 = this.parseNumericArg(args.y2, 'y2');
+                        const duration = this.parseOptionalNumericArg(args.duration, 'duration');
+                        const delta = this.parseOptionalNumericArg(args.delta, 'delta');
+                        const preDelay = this.parseOptionalNumericArg(args.pre_delay ?? args.preDelay, 'pre_delay');
+                        const postDelay = this.parseOptionalNumericArg(args.post_delay ?? args.postDelay, 'post_delay');
+                        const swipeOptions = {};
+                        if (duration !== undefined)
+                            swipeOptions.duration = duration;
+                        if (delta !== undefined)
+                            swipeOptions.delta = delta;
+                        if (preDelay !== undefined)
+                            swipeOptions.preDelay = preDelay;
+                        if (postDelay !== undefined)
+                            swipeOptions.postDelay = postDelay;
+                        return await SimulatorUiTools.swipe(simulatorUuid, { x: x1, y: y1 }, { x: x2, y: y2 }, swipeOptions);
+                    }
                     case 'xcresult_browse':
                         if (!args.xcresult_path) {
                             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcresult_path`);
@@ -783,6 +957,128 @@ export class XcodeServer {
                         throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: file_path`);
                     }
                     return await InfoTools.openFile(args.file_path, args.line_number);
+                case 'list_sims':
+                    return await SimulatorTools.listSimulators();
+                case 'boot_sim': {
+                    const simulatorUuid = (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
+                        (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
+                    if (!simulatorUuid) {
+                        throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: simulator_uuid`);
+                    }
+                    return await SimulatorTools.bootSimulator(simulatorUuid);
+                }
+                case 'open_sim':
+                    return await SimulatorTools.openSimulator();
+                case 'shutdown_sim': {
+                    const simulatorUuid = (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
+                        (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
+                    if (!simulatorUuid) {
+                        throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: simulator_uuid`);
+                    }
+                    return await SimulatorTools.shutdownSimulator(simulatorUuid);
+                }
+                case 'screenshot': {
+                    const simulatorUuid = (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
+                        (typeof args.simulatorUuid === 'string' && args.simulatorUuid) ||
+                        undefined;
+                    const savePath = typeof args.save_path === 'string' ? args.save_path : undefined;
+                    return await SimulatorTools.captureScreenshot(simulatorUuid, savePath);
+                }
+                case 'start_sim_log_cap': {
+                    const simulatorUuid = (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
+                        (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
+                    if (!simulatorUuid) {
+                        throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: simulator_uuid`);
+                    }
+                    const bundleId = (typeof args.bundle_id === 'string' && args.bundle_id) ||
+                        (typeof args.bundleId === 'string' && args.bundleId);
+                    if (!bundleId) {
+                        throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: bundle_id`);
+                    }
+                    const captureConsole = typeof args.capture_console === 'boolean'
+                        ? args.capture_console
+                        : typeof args.capture_console === 'string'
+                            ? args.capture_console.toLowerCase() === 'true'
+                            : false;
+                    const extraArgs = Array.isArray(args.command_line_arguments)
+                        ? args.command_line_arguments.filter((item) => typeof item === 'string')
+                        : [];
+                    return await SimulatorLogTools.startLogCapture({
+                        simulatorUuid,
+                        bundleId,
+                        captureConsole,
+                        args: extraArgs,
+                    });
+                }
+                case 'stop_sim_log_cap': {
+                    const sessionId = (typeof args.session_id === 'string' && args.session_id) ||
+                        (typeof args.sessionId === 'string' && args.sessionId);
+                    if (!sessionId) {
+                        throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: session_id`);
+                    }
+                    return await SimulatorLogTools.stopLogCapture(sessionId);
+                }
+                case 'describe_ui': {
+                    const simulatorUuid = (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
+                        (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
+                    if (!simulatorUuid) {
+                        throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: simulator_uuid`);
+                    }
+                    return await SimulatorUiTools.describeUI(simulatorUuid);
+                }
+                case 'tap': {
+                    const simulatorUuid = (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
+                        (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
+                    if (!simulatorUuid) {
+                        throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: simulator_uuid`);
+                    }
+                    const x = this.parseNumericArg(args.x, 'x');
+                    const y = this.parseNumericArg(args.y, 'y');
+                    const preDelay = this.parseOptionalNumericArg(args.pre_delay ?? args.preDelay, 'pre_delay');
+                    const postDelay = this.parseOptionalNumericArg(args.post_delay ?? args.postDelay, 'post_delay');
+                    const tapOptions = {};
+                    if (preDelay !== undefined)
+                        tapOptions.preDelay = preDelay;
+                    if (postDelay !== undefined)
+                        tapOptions.postDelay = postDelay;
+                    return await SimulatorUiTools.tap(simulatorUuid, x, y, tapOptions);
+                }
+                case 'type_text': {
+                    const simulatorUuid = (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
+                        (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
+                    if (!simulatorUuid) {
+                        throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: simulator_uuid`);
+                    }
+                    if (typeof args.text !== 'string' || args.text.length === 0) {
+                        throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: text`);
+                    }
+                    return await SimulatorUiTools.typeText(simulatorUuid, args.text);
+                }
+                case 'swipe': {
+                    const simulatorUuid = (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
+                        (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
+                    if (!simulatorUuid) {
+                        throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: simulator_uuid`);
+                    }
+                    const x1 = this.parseNumericArg(args.x1, 'x1');
+                    const y1 = this.parseNumericArg(args.y1, 'y1');
+                    const x2 = this.parseNumericArg(args.x2, 'x2');
+                    const y2 = this.parseNumericArg(args.y2, 'y2');
+                    const duration = this.parseOptionalNumericArg(args.duration, 'duration');
+                    const delta = this.parseOptionalNumericArg(args.delta, 'delta');
+                    const preDelay = this.parseOptionalNumericArg(args.pre_delay ?? args.preDelay, 'pre_delay');
+                    const postDelay = this.parseOptionalNumericArg(args.post_delay ?? args.postDelay, 'post_delay');
+                    const swipeOptions = {};
+                    if (duration !== undefined)
+                        swipeOptions.duration = duration;
+                    if (delta !== undefined)
+                        swipeOptions.delta = delta;
+                    if (preDelay !== undefined)
+                        swipeOptions.preDelay = preDelay;
+                    if (postDelay !== undefined)
+                        swipeOptions.postDelay = postDelay;
+                    return await SimulatorUiTools.swipe(simulatorUuid, { x: x1, y: y1 }, { x: x2, y: y2 }, swipeOptions);
+                }
                 case 'xcresult_browse':
                     if (!args.xcresult_path) {
                         throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcresult_path`);
@@ -980,12 +1276,32 @@ export class XcodeServer {
         if (selectedClasses) {
             options.selectedTestClasses = selectedClasses;
         }
+        const parseBooleanFlag = (value) => {
+            if (typeof value === 'boolean') {
+                return value;
+            }
+            if (typeof value === 'string') {
+                const normalized = value.trim().toLowerCase();
+                if (['true', '1', 'yes', 'y'].includes(normalized)) {
+                    return true;
+                }
+                if (['false', '0', 'no', 'n'].includes(normalized)) {
+                    return false;
+                }
+            }
+            return undefined;
+        };
+        const asyncFlagSource = args.run_async ?? args.async ?? args.background;
+        const asyncMode = parseBooleanFlag(asyncFlagSource);
         const request = {
             projectPath,
             destination,
             commandLineArguments,
             options,
         };
+        if (asyncMode) {
+            request.asyncMode = asyncMode;
+        }
         return request;
     }
     async getVersionInfo() {
@@ -1071,7 +1387,13 @@ export class XcodeServer {
             }
         }
     }
-    startAsyncTestJob(request) {
+    async startAsyncTestJob(request) {
+        if (request.asyncMode) {
+            return this.startBackgroundTestJob(request);
+        }
+        return this.runSynchronousTestJob(request);
+    }
+    startBackgroundTestJob(request) {
         this.cleanupExpiredJobs();
         const jobId = `${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 10)}`;
         const optionsCopy = this.cloneTestOptions(request.options);
@@ -1096,10 +1418,7 @@ export class XcodeServer {
         setImmediate(async () => {
             try {
                 const runOptions = this.cloneTestOptions(optionsCopy);
-                if (runOptions && Object.keys(runOptions).length > 0) {
-                    BuildTools.setPendingTestOptions(runOptions);
-                }
-                const result = await BuildTools.test(request.projectPath, request.destination, [...request.commandLineArguments], openProject, runOptions);
+                const result = await this.executeTestRun(request, openProject, runOptions);
                 const job = this.testJobs.get(jobId);
                 if (job) {
                     job.status = 'succeeded';
@@ -1134,6 +1453,18 @@ export class XcodeServer {
                 destination: request.destination ?? request.options?.deviceType ?? 'auto-selected',
             },
         };
+    }
+    async runSynchronousTestJob(request) {
+        const openProject = this.openProject.bind(this);
+        const optionsCopy = this.cloneTestOptions(request.options);
+        const runOptions = this.cloneTestOptions(optionsCopy);
+        return this.executeTestRun(request, openProject, runOptions);
+    }
+    async executeTestRun(request, openProject, runOptions) {
+        if (runOptions && Object.keys(runOptions).length > 0) {
+            BuildTools.setPendingTestOptions(runOptions);
+        }
+        return await BuildTools.test(request.projectPath, request.destination, [...request.commandLineArguments], openProject, runOptions);
     }
     getTestJobStatus(jobId) {
         this.cleanupExpiredJobs();

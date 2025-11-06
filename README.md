@@ -11,6 +11,7 @@ Model Context Protocol (MCP) server that controls Xcode directly through JavaScr
 - Opens projects, builds, runs, tests, and debugs from within Xcode
 - Parses build logs with precise error locations using [XCLogParser](https://github.com/MobileNativeFoundation/XCLogParser)
 - Provides comprehensive environment validation and health checks
+- Adds simulator tooling: list/boot/shutdown, capture live logs, grab screenshots, and drive UI automation with [AXe](https://github.com/cameroncooke/axe) without touching the `xcodebuild` CLI
 - Supports graceful degradation when optional dependencies are missing
 - **NEW**: Includes a full-featured CLI with 100% MCP server feature parity
 
@@ -149,6 +150,8 @@ xcodecontrol --help
 
 # Run a tool with flags  
 xcodecontrol build --xcodeproj /path/to/Project.xcodeproj --scheme MyScheme
+# Run tests and wait for completion (default)
+xcodecontrol test --xcodeproj /path/to/Project.xcodeproj --scheme MyScheme --device-type iphone --os-version 18.0
 
 # Get help for a specific tool
 xcodecontrol build --help
@@ -159,6 +162,35 @@ xcodecontrol build --json-input '{"xcodeproj": "/path/to/Project.xcodeproj", "sc
 # Output results in JSON format
 xcodecontrol --json health-check
 ```
+
+> ℹ️ Prefer the old background behavior? Add `--run-async` (or `{"run_async": true}` when calling the MCP tool directly) to return immediately with a job ID you can poll via `xcode_test_status`.
+
+### Simulator & UI Automation Tools
+
+XcodeMCP now includes simulator management and UI automation commands that do **not** rely on `xcodebuild`. Everything runs through the existing JXA powered `xcode_build_and_run` workflow, so you can boot, launch, and interact with the simulator from the same toolchain.
+
+> **Note:** UI automation commands use [AXe](https://github.com/cameroncooke/axe). Install it with `brew install cameroncooke/axe/axe` or set the `XCODEMCP_AXE_PATH` environment variable to an existing binary.
+
+```bash
+# List and boot simulators
+xcodecontrol list-sims
+xcodecontrol boot-sim --simulator-uuid "<UUID>"
+xcodecontrol open-sim
+
+# Capture a screenshot from the currently booted simulator
+xcodecontrol screenshot --save-path /tmp/screenshot.png
+
+# Start and stop log capture for a simulator/app pair
+xcodecontrol start-sim-log-cap --simulator-uuid "<UUID>" --bundle-id "com.example.MyApp"
+xcodecontrol stop-sim-log-cap --session-id "<SESSION>"
+
+# Drive the UI with AXe (describe → tap → type)
+xcodecontrol describe-ui --simulator-uuid "<UUID>"
+xcodecontrol tap --simulator-uuid "<UUID>" --x 180 --y 420
+xcodecontrol type-text --simulator-uuid "<UUID>" --text "Hello world!"
+```
+
+These tools are also available through any MCP client. Refer to `list_sims`, `boot_sim`, `start_sim_log_cap`, `describe_ui`, `tap`, `type_text`, `swipe`, and `screenshot` in your client's tool list.
 
 ### Path Resolution
 

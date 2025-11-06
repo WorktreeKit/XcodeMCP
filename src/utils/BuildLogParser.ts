@@ -2,7 +2,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { readdir, stat, readFile } from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import { Logger } from './Logger.js';
+import Logger from './Logger.js';
 import type { BuildLogInfo, ParsedBuildResults } from '../types/index.js';
 
 interface XCLogParserIssue {

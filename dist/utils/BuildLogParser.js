@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import { readdir, stat, readFile } from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import { Logger } from './Logger.js';
+import Logger from './Logger.js';
 const FAILURE_STATUS_TOKENS = ['fail', 'error', 'cancel', 'terminate', 'abort'];
 function formatIssue(issue) {
     const fileName = issue.documentURL ? issue.documentURL.replace('file://', '') : 'Unknown file';

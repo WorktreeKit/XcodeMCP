@@ -168,6 +168,10 @@ export function getToolDefinitions(options: {
               ? `Name of the test scheme - defaults to ${preferredScheme}`
               : 'Name of the test scheme to run',
           },
+          run_async: {
+            type: 'boolean',
+            description: 'Return immediately with a background job ID instead of waiting for completion (default: false).',
+          },
         },
         required: [
           ...(!preferredXcodeproj ? ['xcodeproj'] : []),
@@ -341,6 +345,220 @@ export function getToolDefinitions(options: {
           },
         },
         required: ['file_path'],
+      },
+    },
+    {
+      name: 'list_sims',
+      description: 'List available iOS simulators with their states and runtime information.',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+      },
+    },
+    {
+      name: 'boot_sim',
+      description: 'Boot an iOS simulator using its UUID.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          simulator_uuid: {
+            type: 'string',
+            description: 'UUID of the simulator to boot (use list_sims to discover).',
+          },
+        },
+        required: ['simulator_uuid'],
+      },
+    },
+    {
+      name: 'open_sim',
+      description: 'Open the Simulator application.',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+      },
+    },
+    {
+      name: 'shutdown_sim',
+      description: 'Shut down a running simulator.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          simulator_uuid: {
+            type: 'string',
+            description: 'UUID of the simulator to shut down.',
+          },
+        },
+        required: ['simulator_uuid'],
+      },
+    },
+    {
+      name: 'screenshot',
+      description: 'Capture a PNG screenshot from a simulator. Returns the image as base64 data.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          simulator_uuid: {
+            type: 'string',
+            description: 'Optional simulator UUID (defaults to the booted simulator).',
+          },
+          save_path: {
+            type: 'string',
+            description: 'Optional path to save the screenshot on disk.',
+          },
+        },
+      },
+    },
+    {
+      name: 'start_sim_log_cap',
+      description:
+        'Start capturing logs from a simulator. Returns a session ID for stop_sim_log_cap. Optional console capture relaunches the app.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          simulator_uuid: {
+            type: 'string',
+            description: 'UUID of the simulator to capture.',
+          },
+          bundle_id: {
+            type: 'string',
+            description: 'Bundle identifier of the target app (e.g., com.example.MyApp).',
+          },
+          capture_console: {
+            type: 'boolean',
+            description: 'Capture console output by relaunching the app (defaults to false).',
+          },
+          command_line_arguments: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Arguments forwarded when relaunching the app for console capture.',
+          },
+        },
+        required: ['simulator_uuid', 'bundle_id'],
+      },
+    },
+    {
+      name: 'stop_sim_log_cap',
+      description: 'Stop log capture started by start_sim_log_cap and return collected output.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          session_id: {
+            type: 'string',
+            description: 'Session ID returned by start_sim_log_cap.',
+          },
+        },
+        required: ['session_id'],
+      },
+    },
+    {
+      name: 'describe_ui',
+      description:
+        'Return the accessibility hierarchy for the running simulator using AXe. Provides coordinates for automation.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          simulator_uuid: {
+            type: 'string',
+            description: 'UUID of the simulator to inspect.',
+          },
+        },
+        required: ['simulator_uuid'],
+      },
+    },
+    {
+      name: 'tap',
+      description:
+        'Tap at specific coordinates using AXe. Use describe_ui first to gather accurate positions.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          simulator_uuid: {
+            type: 'string',
+            description: 'UUID of the simulator to interact with.',
+          },
+          x: {
+            type: 'number',
+            description: 'X coordinate in simulator points.',
+          },
+          y: {
+            type: 'number',
+            description: 'Y coordinate in simulator points.',
+          },
+          pre_delay: {
+            type: 'number',
+            description: 'Optional delay before performing the tap (seconds).',
+          },
+          post_delay: {
+            type: 'number',
+            description: 'Optional delay after performing the tap (seconds).',
+          },
+        },
+        required: ['simulator_uuid', 'x', 'y'],
+      },
+    },
+    {
+      name: 'type_text',
+      description: 'Type text into the simulator using AXe keyboard events. Focus the target field first.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          simulator_uuid: {
+            type: 'string',
+            description: 'UUID of the simulator to interact with.',
+          },
+          text: {
+            type: 'string',
+            description: 'Text to type (standard US keyboard characters).',
+          },
+        },
+        required: ['simulator_uuid', 'text'],
+      },
+    },
+    {
+      name: 'swipe',
+      description:
+        'Swipe from one coordinate to another using AXe. Coordinates are provided in simulator points.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          simulator_uuid: {
+            type: 'string',
+            description: 'UUID of the simulator to interact with.',
+          },
+          x1: {
+            type: 'number',
+            description: 'Start X coordinate.',
+          },
+          y1: {
+            type: 'number',
+            description: 'Start Y coordinate.',
+          },
+          x2: {
+            type: 'number',
+            description: 'End X coordinate.',
+          },
+          y2: {
+            type: 'number',
+            description: 'End Y coordinate.',
+          },
+          duration: {
+            type: 'number',
+            description: 'Optional swipe duration in seconds.',
+          },
+          delta: {
+            type: 'number',
+            description: 'Optional sampling delta for the gesture.',
+          },
+          pre_delay: {
+            type: 'number',
+            description: 'Optional delay before performing the swipe.',
+          },
+          post_delay: {
+            type: 'number',
+            description: 'Optional delay after performing the swipe.',
+          },
+        },
+        required: ['simulator_uuid', 'x1', 'y1', 'x2', 'y2'],
       },
     },
     {

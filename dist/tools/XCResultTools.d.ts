@@ -95,4 +95,5 @@ export declare class XCResultTools {
      */
     private static runFFmpeg;
 }
+export default XCResultTools;
 //# sourceMappingURL=XCResultTools.d.ts.map

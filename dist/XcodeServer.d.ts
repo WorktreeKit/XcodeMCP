@@ -25,6 +25,8 @@ export declare class XcodeServer {
      * Checks if a tool operation should be blocked due to environment issues
      */
     validateToolOperation(toolName: string): Promise<McpResult | null>;
+    private parseNumericArg;
+    private parseOptionalNumericArg;
     /**
      * Determines tool limitations based on environment validation
      */
@@ -66,6 +68,9 @@ export declare class XcodeServer {
     private getVersionInfo;
     private cleanupExpiredJobs;
     private startAsyncTestJob;
+    private startBackgroundTestJob;
+    private runSynchronousTestJob;
+    private executeTestRun;
     private getTestJobStatus;
 }
 //# sourceMappingURL=XcodeServer.d.ts.map

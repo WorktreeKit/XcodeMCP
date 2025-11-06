@@ -1,7 +1,7 @@
 import { promises as fs } from 'fs';
 import { dirname, join, basename } from 'path';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
-import { Logger } from '../utils/Logger.js';
+import Logger from '../utils/Logger.js';
 export class TestPlanTools {
     /**
      * Update an .xctestplan file to run specific tests

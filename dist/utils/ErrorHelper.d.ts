@@ -12,4 +12,5 @@ export declare class ErrorHelper {
         message?: string;
     }): string | null;
 }
+export default ErrorHelper;
 //# sourceMappingURL=ErrorHelper.d.ts.map

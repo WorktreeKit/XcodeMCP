@@ -10,4 +10,5 @@ export declare class PathValidator {
     static validateProjectPath(projectPath: string, parameterName?: string): McpResult | null;
     static validateFilePath(filePath: string): McpResult | null;
 }
+export default PathValidator;
 //# sourceMappingURL=PathValidator.d.ts.map

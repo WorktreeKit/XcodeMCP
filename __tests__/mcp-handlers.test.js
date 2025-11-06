@@ -32,7 +32,14 @@ jest.mock('@modelcontextprotocol/sdk/types.js', () => ({
 // Mock child_process
 const mockSpawn = jest.fn();
 jest.mock('child_process', () => ({
-  spawn: mockSpawn
+  spawn: mockSpawn,
+  execFile: jest.fn((...args) => {
+    const callback = typeof args[args.length - 1] === 'function' ? args[args.length - 1] : undefined;
+    if (callback) {
+      callback(null, '', '');
+    }
+    return { pid: 123 };
+  }),
 }));
 
 // Suppress console.error during tests

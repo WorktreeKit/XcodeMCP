@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { XCResultParser } from '../utils/XCResultParser.js';
-import { Logger } from '../utils/Logger.js';
+import Logger from '../utils/Logger.js';
 import type { McpResult, TestAttachment } from '../types/index.js';
 
 export class XCResultTools {
@@ -1683,3 +1683,5 @@ export class XCResultTools {
     });
   }
 }
+
+export default XCResultTools;

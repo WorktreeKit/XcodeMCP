@@ -3,10 +3,20 @@ import { jest } from '@jest/globals';
 // Mock dependencies
 jest.mock('child_process', () => ({
   spawn: jest.fn().mockReturnValue({
-    stdout: { on: jest.fn() },
-    stderr: { on: jest.fn() },
-    on: jest.fn()
-  })
+    stdout: { on: jest.fn(), pipe: jest.fn() },
+    stderr: { on: jest.fn(), pipe: jest.fn() },
+    on: jest.fn(),
+    kill: jest.fn(),
+    exitCode: null,
+    killed: false,
+  }),
+  execFile: jest.fn((...args) => {
+    const callback = typeof args[args.length - 1] === 'function' ? args[args.length - 1] : undefined;
+    if (callback) {
+      callback(null, '', '');
+    }
+    return { pid: 123 };
+  }),
 }));
 
 jest.mock('@modelcontextprotocol/sdk/server/index.js', () => ({

@@ -4,7 +4,14 @@ import { EventEmitter } from 'events';
 const spawnMock = vi.hoisted(() => vi.fn()) as ReturnType<typeof vi.fn>;
 
 vi.mock('child_process', () => ({
-  spawn: spawnMock
+  spawn: spawnMock,
+  execFile: vi.fn((...args: any[]) => {
+    const callback = typeof args[args.length - 1] === 'function' ? args[args.length - 1] : undefined;
+    if (callback) {
+      callback(null, '', '');
+    }
+    return { pid: 123 };
+  }),
 }));
 
 import { BuildLogParser } from '../../src/utils/BuildLogParser.js';

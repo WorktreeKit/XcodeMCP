@@ -1,5 +1,5 @@
 import { JXAExecutor } from '../utils/JXAExecutor.js';
-import { PathValidator } from '../utils/PathValidator.js';
+import PathValidator from '../utils/PathValidator.js';
 import { getWorkspaceByPathScript } from '../utils/JXAHelpers.js';
 export class InfoTools {
     static async getWorkspaceInfo(projectPath, openProject) {
@@ -69,4 +69,5 @@ export class InfoTools {
         return { content: [{ type: 'text', text: result }] };
     }
 }
+export default InfoTools;
 //# sourceMappingURL=InfoTools.js.map

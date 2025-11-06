@@ -6,7 +6,7 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { XcodeServer } from './XcodeServer.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { Logger } from './utils/Logger.js';
+import Logger from './utils/Logger.js';
 import { getToolDefinitions } from './shared/toolDefinitions.js';
 
 interface ToolDefinition {

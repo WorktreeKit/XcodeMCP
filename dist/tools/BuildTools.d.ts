@@ -61,4 +61,5 @@ export declare class BuildTools {
      */
     private static _handleReplaceExistingBuildAlert;
 }
+export default BuildTools;
 //# sourceMappingURL=BuildTools.d.ts.map

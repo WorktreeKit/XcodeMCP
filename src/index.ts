@@ -4,7 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { createServer } from 'http';
 import { XcodeServer } from './XcodeServer.js';
-import { Logger } from './utils/Logger.js';
+import Logger from './utils/Logger.js';
 import type { EnvironmentValidation } from './types/index.js';
 
 // Handle uncaught exceptions and unhandled promise rejections 

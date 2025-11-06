@@ -181,6 +181,7 @@ export class Logger {
         return Logger.getInstance().isLevelEnabled(level);
     }
 }
+export default Logger;
 // Ensure proper cleanup on process exit
 process.on('exit', async () => {
     await Logger.flush();

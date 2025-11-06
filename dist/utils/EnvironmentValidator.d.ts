@@ -57,5 +57,7 @@ export declare class EnvironmentValidator {
      * Creates a configuration health check report
      */
     static createHealthCheckReport(): Promise<string>;
+    private static getBuildMetadata;
+    private static getLatestFileMTime;
 }
 //# sourceMappingURL=EnvironmentValidator.d.ts.map

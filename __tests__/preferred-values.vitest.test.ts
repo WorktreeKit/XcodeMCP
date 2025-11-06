@@ -193,7 +193,15 @@ describe('Preferred Values', () => {
       expect(testTool!.inputSchema.required).toEqual(['scheme']);
     });
 
-    it('should correctly handle xcode_set_active_scheme', () => {
+    it('should expose optional run_async flag for xcode_test', () => {
+      const tools = getToolDefinitions({});
+      const testTool = tools.find(t => t.name === 'xcode_test');
+      expect(testTool).toBeDefined();
+      expect(testTool!.inputSchema.properties.run_async).toBeDefined();
+      expect(testTool!.inputSchema.properties.run_async.type).toBe('boolean');
+    });
+
+  it('should correctly handle xcode_set_active_scheme', () => {
       // No preferred values - both required
       let tools = getToolDefinitions({});
       let schemeTool = tools.find(t => t.name === 'xcode_set_active_scheme');

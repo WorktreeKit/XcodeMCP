@@ -3,7 +3,7 @@ import { existsSync, mkdirSync } from 'fs';
 import { stat } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { Logger } from './Logger.js';
+import Logger from './Logger.js';
 import type { TestAttachment } from '../types/index.js';
 
 // Data models based on XCResultExplorer

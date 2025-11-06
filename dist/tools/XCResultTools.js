@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { XCResultParser } from '../utils/XCResultParser.js';
-import { Logger } from '../utils/Logger.js';
+import Logger from '../utils/Logger.js';
 export class XCResultTools {
     /**
      * Browse xcresult file - list tests or show specific test details
@@ -1260,4 +1260,5 @@ export class XCResultTools {
         });
     }
 }
+export default XCResultTools;
 //# sourceMappingURL=XCResultTools.js.map

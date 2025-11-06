@@ -13,4 +13,5 @@ export declare class ProjectTools {
      */
     static getTestTargets(projectPath: string): Promise<McpResult>;
 }
+export default ProjectTools;
 //# sourceMappingURL=ProjectTools.d.ts.map

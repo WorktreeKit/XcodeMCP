@@ -4,4 +4,5 @@ export declare class InfoTools {
     static getProjects(projectPath: string, openProject: OpenProjectCallback): Promise<McpResult>;
     static openFile(filePath: string, lineNumber?: number): Promise<McpResult>;
 }
+export default InfoTools;
 //# sourceMappingURL=InfoTools.d.ts.map

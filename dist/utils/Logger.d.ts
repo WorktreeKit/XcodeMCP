@@ -78,4 +78,5 @@ export declare class Logger {
     static getLogLevel(): string;
     static isLevelEnabled(level: number): boolean;
 }
+export default Logger;
 //# sourceMappingURL=Logger.d.ts.map
