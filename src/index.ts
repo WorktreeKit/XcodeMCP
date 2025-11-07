@@ -7,6 +7,18 @@ import { XcodeServer } from './XcodeServer.js';
 import Logger from './utils/Logger.js';
 import type { EnvironmentValidation } from './types/index.js';
 
+const ALLOWED_EXACT_ARGS = new Set(['--no-clean']);
+const ALLOWED_PREFIX_ARGS = ['--preferred-scheme=', '--preferred-xcodeproj=', '--port='];
+
+export function findUnsupportedServerArgs(args: string[]): string[] {
+  return args.filter((arg) => {
+    if (ALLOWED_EXACT_ARGS.has(arg)) {
+      return false;
+    }
+    return !ALLOWED_PREFIX_ARGS.some((prefix) => arg.startsWith(prefix));
+  });
+}
+
 // Handle uncaught exceptions and unhandled promise rejections 
 process.on('uncaughtException', (error) => {
   Logger.error('🚨 UNCAUGHT EXCEPTION - This may indicate a bug that needs fixing:', error);
@@ -200,6 +212,17 @@ export class XcodeMCPServer extends XcodeServer {
 
 // Only run if not in test environment
 if (process.env.NODE_ENV !== 'test') {
+  const unsupportedArgs = findUnsupportedServerArgs(process.argv.slice(2));
+  if (unsupportedArgs.length > 0) {
+    const formattedArgs = unsupportedArgs.join(', ');
+    Logger.error('Unsupported arguments provided to xcodemcp CLI:', formattedArgs);
+    Logger.error('The xcodemcp binary only starts the MCP server and does not run tools directly.');
+    console.error('❌ xcodemcp only launches the MCP server.');
+    console.error(`Unsupported arguments detected: ${formattedArgs}`);
+    console.error('Run individual build/test commands via your MCP client (e.g., call the xcode_build or xcode_test tools, or use the xcodecontrol CLI).');
+    await Logger.flush();
+    process.exit(1);
+  }
   // Check for --no-clean argument
   const noCleanArg = process.argv.includes('--no-clean');
   const includeClean = !noCleanArg;

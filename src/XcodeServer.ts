@@ -18,6 +18,7 @@ import XCResultTools from './tools/XCResultTools.js';
 import SimulatorTools from './tools/SimulatorTools.js';
 import SimulatorLogTools from './tools/SimulatorLogTools.js';
 import SimulatorUiTools from './tools/SimulatorUiTools.js';
+import WebviewTools from './tools/WebviewTools.js';
 import PathValidator from './utils/PathValidator.js';
 import { EnvironmentValidator } from './utils/EnvironmentValidator.js';
 import Logger from './utils/Logger.js';
@@ -849,6 +850,102 @@ export class XcodeServer {
                 text: `Project refreshed: ${refreshResult.content?.[0]?.type === 'text' ? refreshResult.content[0].text : 'Completed'}`
               }]
             };
+          case 'webview_start_proxy':
+            {
+              const startArgs: { udid?: string; port?: number; foreground?: boolean } = {};
+              if (typeof args.udid === 'string' && args.udid) {
+                startArgs.udid = args.udid;
+              }
+              if (args.port !== undefined) {
+                const parsedPort =
+                  typeof args.port === 'number' ? args.port : Number(args.port);
+                if (!Number.isNaN(parsedPort)) {
+                  startArgs.port = parsedPort;
+                }
+              }
+              if (args.foreground === true || args.foreground === 'true') {
+                startArgs.foreground = true;
+              }
+              return await WebviewTools.startProxy(startArgs);
+            }
+          case 'webview_stop_proxy':
+            if (!args.udid || typeof args.udid !== 'string') {
+              throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: udid`);
+            }
+            return await WebviewTools.stopProxy({ udid: args.udid as string });
+          case 'webview_list_targets':
+            {
+              const listArgs: { udid?: string; port?: number } = {};
+              if (typeof args.udid === 'string' && args.udid) {
+                listArgs.udid = args.udid;
+              }
+              if (args.port !== undefined) {
+                const parsedPort =
+                  typeof args.port === 'number' ? args.port : Number(args.port);
+                if (!Number.isNaN(parsedPort)) {
+                  listArgs.port = parsedPort;
+                }
+              }
+              return await WebviewTools.listTargets(listArgs);
+            }
+          case 'webview_eval':
+            if (!args.udid || typeof args.udid !== 'string') {
+              throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: udid`);
+            }
+            if (!args.target_id_or_url || typeof args.target_id_or_url !== 'string') {
+              throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: target_id_or_url`);
+            }
+            if (!args.expr || typeof args.expr !== 'string') {
+              throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: expr`);
+            }
+            {
+              const evalArgs: {
+                udid: string;
+                target_id_or_url: string;
+                expr: string;
+                port?: number;
+                timeout_ms?: number;
+              } = {
+                udid: args.udid as string,
+                target_id_or_url: args.target_id_or_url as string,
+                expr: args.expr as string,
+              };
+              if (args.port !== undefined) {
+                const parsedPort =
+                  typeof args.port === 'number' ? args.port : Number(args.port);
+                if (!Number.isNaN(parsedPort)) {
+                  evalArgs.port = parsedPort;
+                }
+              }
+              if (args.timeout_ms !== undefined) {
+                const parsedTimeout =
+                  typeof args.timeout_ms === 'number'
+                    ? args.timeout_ms
+                    : Number(args.timeout_ms);
+                if (!Number.isNaN(parsedTimeout)) {
+                  evalArgs.timeout_ms = parsedTimeout;
+                }
+              }
+              return await WebviewTools.evaluate(evalArgs);
+            }
+          case 'webview_open_ui':
+            {
+              const openArgs: { udid?: string; port?: number; page_id?: string } = {};
+              if (typeof args.udid === 'string' && args.udid) {
+                openArgs.udid = args.udid;
+              }
+              if (args.port !== undefined) {
+                const parsedPort =
+                  typeof args.port === 'number' ? args.port : Number(args.port);
+                if (!Number.isNaN(parsedPort)) {
+                  openArgs.port = parsedPort;
+                }
+              }
+              if (typeof args.page_id === 'string' && args.page_id) {
+                openArgs.page_id = args.page_id;
+              }
+              return await WebviewTools.openUi(openArgs);
+            }
           default:
             throw new McpError(
               ErrorCode.MethodNotFound,

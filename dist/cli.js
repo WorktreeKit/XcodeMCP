@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { XcodeServer } from './XcodeServer.js';
 import Logger from './utils/Logger.js';
 import { getToolDefinitions } from './shared/toolDefinitions.js';
+import { registerWebviewCommands } from './cli/commands/webview/register.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 /**
  * Load package.json to get version info
@@ -294,13 +295,29 @@ async function main() {
                 ],
                 'System & Diagnostics': [
                     'health-check', 'list-tools', 'help'
+                ],
+                'WebView': [
+                    'webview:proxy',
+                    'webview:proxy --stop',
+                    'webview:list',
+                    'webview:eval',
+                    'webview:open'
                 ]
             };
             // Create a map of command name to tool for quick lookup
             const toolMap = new Map();
             for (const tool of tools) {
-                const commandName = tool.name.replace(/^xcode_/, '').replace(/_/g, '-');
+                const defaultName = tool.name.replace(/^xcode_/, '').replace(/_/g, '-');
+                const commandName = tool.cliName ?? defaultName;
                 toolMap.set(commandName, tool);
+                if (tool.cliAliases) {
+                    for (const alias of tool.cliAliases) {
+                        toolMap.set(alias, tool);
+                    }
+                }
+                if (!toolMap.has(defaultName)) {
+                    toolMap.set(defaultName, tool);
+                }
             }
             // Add non-tool commands
             toolMap.set('help', { description: 'Show help information' });
@@ -323,13 +340,23 @@ async function main() {
             console.log('⏱️  Note: Build, test, and run commands can take minutes to hours.');
             console.log('   The CLI handles long operations automatically - do not timeout.');
         });
+        // Register WebView-specific commands (custom CLI implementations)
+        registerWebviewCommands(program);
         // Dynamically create subcommands for each tool
         for (const tool of tools) {
+            if (tool.cliHidden) {
+                continue;
+            }
             // Convert tool name: remove "xcode_" prefix and replace underscores with dashes
-            const commandName = tool.name.replace(/^xcode_/, '').replace(/_/g, '-');
+            const commandName = tool.cliName ?? tool.name.replace(/^xcode_/, '').replace(/_/g, '-');
             const cmd = program
                 .command(commandName)
                 .description(tool.description);
+            if (tool.cliAliases) {
+                for (const alias of tool.cliAliases) {
+                    cmd.alias(alias);
+                }
+            }
             // Add options based on the tool's input schema
             if (tool.inputSchema?.properties) {
                 for (const [propName, propSchema] of Object.entries(tool.inputSchema.properties)) {

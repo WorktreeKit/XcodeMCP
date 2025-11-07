@@ -2,6 +2,9 @@ export interface ToolDefinition {
     name: string;
     description: string;
     inputSchema: any;
+    cliName?: string;
+    cliAliases?: string[];
+    cliHidden?: boolean;
 }
 /**
  * Get all tool definitions shared between CLI and MCP

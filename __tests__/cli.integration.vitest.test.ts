@@ -52,6 +52,39 @@ describe('CLI Integration Tests', () => {
     expect(stdout).toContain('--destination <value>');
   });
 
+  it('should show help for webview:proxy', async () => {
+    const { stdout } = await execa('node', [CLI_PATH, 'webview:proxy', '--help']);
+    expect(stdout).toContain('Start or stop ios_webkit_debug_proxy');
+    expect(stdout).toContain('--udid <udid>');
+    expect(stdout).toContain('--port <port>');
+    expect(stdout).toContain('--foreground');
+    expect(stdout).toContain('--stop');
+  });
+
+  it('should show help for webview:list', async () => {
+    const { stdout } = await execa('node', [CLI_PATH, 'webview:list', '--help']);
+    expect(stdout).toContain('List inspectable WKWebView');
+    expect(stdout).toContain('--udid <udid>');
+    expect(stdout).toContain('--port <port>');
+    expect(stdout).toContain('global --json');
+  });
+
+  it('should show help for webview:eval', async () => {
+    const { stdout } = await execa('node', [CLI_PATH, 'webview:eval', '--help']);
+    expect(stdout).toContain('Evaluate JavaScript inside a WKWebView');
+    expect(stdout).toContain('--udid <udid>');
+    expect(stdout).toContain('--target <pageIdOrUrl>');
+    expect(stdout).toContain('--expr <expression>');
+    expect(stdout).toContain('--timeout <ms>');
+  });
+
+  it('should show help for webview:open', async () => {
+    const { stdout } = await execa('node', [CLI_PATH, 'webview:open', '--help']);
+    expect(stdout).toContain('Open the ios_webkit_debug_proxy device list');
+    expect(stdout).toContain('--page <pageId>');
+    expect(stdout).toContain('--device');
+  });
+
   it('should execute health check successfully', async () => {
     const { stdout, stderr } = await execa('node', [CLI_PATH, 'health-check']);
     

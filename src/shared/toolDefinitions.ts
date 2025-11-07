@@ -2,6 +2,9 @@ export interface ToolDefinition {
   name: string;
   description: string;
   inputSchema: any;
+  cliName?: string;
+  cliAliases?: string[];
+  cliHidden?: boolean;
 }
 
 /**
@@ -768,6 +771,127 @@ export function getToolDefinitions(options: {
           },
         },
         required: ['xcodeproj'],
+      },
+    },
+    {
+      name: 'webview_start_proxy',
+      description: 'Start ios_webkit_debug_proxy for a specific simulator or device',
+      cliName: 'webview:proxy',
+      cliAliases: ['webview-start-proxy'],
+      cliHidden: true,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          udid: {
+            type: 'string',
+            description: 'Target simulator/device UDID. Defaults to the first booted target.',
+          },
+          port: {
+            type: 'number',
+            description: 'Base port for inspectable tabs (device list uses port-1). Defaults to 9222.',
+          },
+          foreground: {
+            type: 'boolean',
+            description: 'Run ios_webkit_debug_proxy in the foreground (stream logs).',
+          },
+        },
+        required: [],
+      },
+    },
+    {
+      name: 'webview_stop_proxy',
+      description: 'Stop a running ios_webkit_debug_proxy instance for the provided UDID',
+      cliName: 'webview:proxy --stop',
+      cliAliases: ['webview-stop-proxy'],
+      cliHidden: true,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          udid: {
+            type: 'string',
+            description: 'Target simulator/device UDID to stop.',
+          },
+        },
+        required: ['udid'],
+      },
+    },
+    {
+      name: 'webview_list_targets',
+      description: 'List inspectable WKWebView or Safari targets exposed via ios_webkit_debug_proxy',
+      cliName: 'webview:list',
+      cliAliases: ['webview-list'],
+      cliHidden: true,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          udid: {
+            type: 'string',
+            description: 'Optional UDID to scope the listing. Defaults to the first booted target.',
+          },
+          port: {
+            type: 'number',
+            description: 'Base port for inspectable tabs (device list uses port-1). Defaults to 9222.',
+          },
+        },
+        required: [],
+      },
+    },
+    {
+      name: 'webview_eval',
+      description: 'Evaluate JavaScript inside a WKWebView/Safari target exposed via ios_webkit_debug_proxy',
+      cliName: 'webview:eval',
+      cliAliases: ['webview-eval'],
+      cliHidden: true,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          udid: {
+            type: 'string',
+            description: 'Target simulator/device UDID.',
+          },
+          target_id_or_url: {
+            type: 'string',
+            description: 'Page identifier or URL substring to select the target.',
+          },
+          expr: {
+            type: 'string',
+            description: 'JavaScript expression to evaluate.',
+          },
+          port: {
+            type: 'number',
+            description: 'Base port (tabs). Defaults to 9222.',
+          },
+          timeout_ms: {
+            type: 'number',
+            description: 'Timeout in milliseconds for the evaluation (default 5000).',
+          },
+        },
+        required: ['udid', 'target_id_or_url', 'expr'],
+      },
+    },
+    {
+      name: 'webview_open_ui',
+      description: 'Open the ios_webkit_debug_proxy device or page inspector UI in the default browser',
+      cliName: 'webview:open',
+      cliAliases: ['webview-open'],
+      cliHidden: true,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          udid: {
+            type: 'string',
+            description: 'Optional UDID to scope the UI. Defaults to first booted.',
+          },
+          port: {
+            type: 'number',
+            description: 'Base port for tabs (device list uses port-1). Defaults to 9222.',
+          },
+          page_id: {
+            type: 'string',
+            description: 'Optional page identifier to open directly.',
+          },
+        },
+        required: [],
       },
     },
   ];
