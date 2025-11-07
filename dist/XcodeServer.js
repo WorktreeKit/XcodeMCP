@@ -1529,7 +1529,7 @@ export class XcodeServer {
             content: [
                 {
                     type: 'text',
-                    text: `🟡 TEST JOB STARTED\n\nJob ID: ${jobId}\nStarted: ${new Date(jobRecord.startedAt).toLocaleString()}\nDestination: ${request.destination ?? request.options?.deviceType ?? 'auto-selected'}\n\nPoll with xcode_test_status --job-id ${jobId}.`,
+                    text: `🟡 TEST JOB STARTED\n\nJob ID: ${jobId}\nStarted: ${new Date(jobRecord.startedAt).toLocaleString()}\nDestination: ${request.destination ?? request.options?.deviceType ?? 'auto-selected'}.`,
                 },
             ],
             _meta: {

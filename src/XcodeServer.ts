@@ -529,11 +529,17 @@ export class XcodeServer {
           const request = this.prepareTestRequest(args);
           return this.startAsyncTestJob(request);
         }
-        case 'xcode_test_status':
+        case 'xcode_test_status': {
           if (!args.job_id || typeof args.job_id !== 'string') {
             return { content: [{ type: 'text', text: 'Error: job_id parameter is required' }] };
           }
+          const shouldWait = this.parseBooleanInput(args.wait);
+          if (shouldWait) {
+            const intervalSeconds = this.parsePositiveNumber(args.poll_interval_seconds) ?? 5;
+            return await this.waitForTestJobCompletion(args.job_id as string, intervalSeconds * 1000);
+          }
           return this.getTestJobStatus(args.job_id as string);
+        }
           case 'xcode_build_and_run':
             if (!args.xcodeproj) {
               throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
@@ -1193,11 +1199,17 @@ export class XcodeServer {
           const request = this.prepareTestRequest(args);
           return this.startAsyncTestJob(request);
         }
-        case 'xcode_test_status':
+        case 'xcode_test_status': {
           if (!args.job_id || typeof args.job_id !== 'string') {
             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: job_id`);
           }
+          const shouldWait = this.parseBooleanInput(args.wait);
+          if (shouldWait) {
+            const intervalSeconds = this.parsePositiveNumber(args.poll_interval_seconds) ?? 5;
+            return await this.waitForTestJobCompletion(args.job_id as string, intervalSeconds * 1000);
+          }
           return this.getTestJobStatus(args.job_id as string);
+        }
         case 'xcode_build_and_run':
           if (!args.xcodeproj) {
             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
@@ -1650,24 +1662,8 @@ export class XcodeServer {
       options.selectedTestClasses = selectedClasses;
     }
 
-    const parseBooleanFlag = (value: unknown): boolean | undefined => {
-      if (typeof value === 'boolean') {
-        return value;
-      }
-      if (typeof value === 'string') {
-        const normalized = value.trim().toLowerCase();
-        if (['true', '1', 'yes', 'y'].includes(normalized)) {
-          return true;
-        }
-        if (['false', '0', 'no', 'n'].includes(normalized)) {
-          return false;
-        }
-      }
-      return undefined;
-    };
-
     const asyncFlagSource = args.run_async ?? args.async ?? args.background;
-    const asyncMode = parseBooleanFlag(asyncFlagSource);
+    const asyncMode = this.parseBooleanInput(asyncFlagSource);
 
     const request: TestJobRequest = {
       projectPath,
@@ -1676,8 +1672,8 @@ export class XcodeServer {
       options,
     };
 
-    if (asyncMode) {
-      request.asyncMode = asyncMode;
+    if (asyncMode === true) {
+      request.asyncMode = true;
     }
 
     return request;
@@ -1767,6 +1763,55 @@ export class XcodeServer {
         this.testJobs.delete(jobId);
         Logger.debug(`Cleaned up completed test job ${jobId} (age ${(now - job.updatedAt) / 1000}s).`);
       }
+    }
+  }
+
+  private parseBooleanInput(value: unknown): boolean | undefined {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (['true', '1', 'yes', 'y'].includes(normalized)) {
+        return true;
+      }
+      if (['false', '0', 'no', 'n'].includes(normalized)) {
+        return false;
+      }
+    }
+    return undefined;
+  }
+
+  private parsePositiveNumber(value: unknown): number | undefined {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const parsed = Number(value.trim());
+      if (Number.isFinite(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
+    return undefined;
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private isJobResultRunning(result: McpResult): boolean {
+    const status = (result as { _meta?: { status?: string } })._meta?.status;
+    return status === 'running';
+  }
+
+  private async waitForTestJobCompletion(jobId: string, pollIntervalMs = 5000): Promise<McpResult> {
+    const interval = Math.max(1000, pollIntervalMs);
+    while (true) {
+      const status = this.getTestJobStatus(jobId);
+      if (!this.isJobResultRunning(status)) {
+        return status;
+      }
+      await this.sleep(interval);
     }
   }
 

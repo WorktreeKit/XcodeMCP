@@ -205,6 +205,8 @@ xcodecontrol --json health-check
 
 > ℹ️ Prefer the old background behavior? Add `--run-async` (or `{"run_async": true}` when calling the MCP tool directly) to return immediately with a job ID you can poll via `xcode_test_status`.
 
+> ⏳ Already have a job ID? Use `xcodecontrol test-status --job-id <ID> --wait` (or call `xcode_test_status` with `{ "wait": true }`) to have the server poll until the run finishes.
+
 ### Simulator & UI Automation Tools
 
 XcodeMCP now includes simulator management and UI automation commands that do **not** rely on `xcodebuild`. Everything runs through the existing JXA powered `xcode_build_and_run` workflow, so you can boot, launch, and interact with the simulator from the same toolchain.

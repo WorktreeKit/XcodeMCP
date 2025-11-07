@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { XcodeServer } from './XcodeServer.js';
+export declare function findUnsupportedServerArgs(args: string[]): string[];
 export declare class XcodeMCPServer extends XcodeServer {
     constructor(options?: {
         includeClean?: boolean;

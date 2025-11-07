@@ -434,9 +434,6 @@ async function main() {
                     if (tool.name === 'xcode_test') {
                         const jobId = extractJobIdFromResult(result);
                         if (jobId) {
-                            if (!program.opts().json) {
-                                console.log(formatResult(result, false));
-                            }
                             result = await waitForTestJobCompletion(server, jobId, program.opts().json, cmd.opts().verbose ?? false);
                         }
                     }

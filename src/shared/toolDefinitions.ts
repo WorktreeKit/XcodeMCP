@@ -192,6 +192,14 @@ export function getToolDefinitions(options: {
             type: 'string',
             description: 'Job identifier returned by xcode_test.',
           },
+          wait: {
+            type: 'boolean',
+            description: 'If true, block until the test job finishes (polls every 5 seconds by default).',
+          },
+          poll_interval_seconds: {
+            type: 'number',
+            description: 'Optional: seconds between status checks when wait=true (minimum 1 second, default 5).',
+          },
         },
         required: ['job_id'],
       },
