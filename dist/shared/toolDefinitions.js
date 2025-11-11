@@ -5,38 +5,6 @@ export function getToolDefinitions(options = { includeClean: true }) {
     const { includeClean = true, preferredScheme, preferredXcodeproj } = options;
     const tools = [
         {
-            name: 'xcode_open_project',
-            description: 'Open an Xcode project or workspace',
-            inputSchema: {
-                type: 'object',
-                properties: {
-                    xcodeproj: {
-                        type: 'string',
-                        description: preferredXcodeproj
-                            ? `Absolute path to the .xcodeproj file (or .xcworkspace if available) - defaults to ${preferredXcodeproj}`
-                            : 'Absolute path to the .xcodeproj file (or .xcworkspace if available) - e.g., /path/to/project.xcodeproj',
-                    },
-                },
-                required: preferredXcodeproj ? [] : ['xcodeproj'],
-            },
-        },
-        {
-            name: 'xcode_close_project',
-            description: 'Close the currently active Xcode project or workspace (automatically stops any running actions first)',
-            inputSchema: {
-                type: 'object',
-                properties: {
-                    xcodeproj: {
-                        type: 'string',
-                        description: preferredXcodeproj
-                            ? `Absolute path to the .xcodeproj file (or .xcworkspace if available) - defaults to ${preferredXcodeproj}`
-                            : 'Absolute path to the .xcodeproj file (or .xcworkspace if available) - e.g., /path/to/project.xcodeproj',
-                    },
-                },
-                required: preferredXcodeproj ? [] : ['xcodeproj'],
-            },
-        },
-        {
             name: 'xcode_build',
             description: 'Build a specific Xcode project or workspace with the specified scheme. If destination is not provided, uses the currently active destination. ⏱️ Can take minutes to hours - do not timeout.',
             inputSchema: {
@@ -158,29 +126,11 @@ export function getToolDefinitions(options = { includeClean: true }) {
                             ? `Name of the test scheme - defaults to ${preferredScheme}`
                             : 'Name of the test scheme to run',
                     },
-                    run_async: {
-                        type: 'boolean',
-                        description: 'Return immediately with a background job ID instead of waiting for completion (default: false).',
-                    },
                 },
                 required: [
                     ...(!preferredXcodeproj ? ['xcodeproj'] : []),
                     ...(!preferredScheme ? ['scheme'] : [])
                 ],
-            },
-        },
-        {
-            name: 'xcode_test_status',
-            description: 'Check the status of an asynchronous test job started via xcode_test.',
-            inputSchema: {
-                type: 'object',
-                properties: {
-                    job_id: {
-                        type: 'string',
-                        description: 'Job identifier returned by xcode_test.',
-                    },
-                },
-                required: ['job_id'],
             },
         },
         {
@@ -211,32 +161,6 @@ export function getToolDefinitions(options = { includeClean: true }) {
                     ...(!preferredXcodeproj ? ['xcodeproj'] : []),
                     ...(!preferredScheme ? ['scheme'] : [])
                 ],
-            },
-        },
-        {
-            name: 'xcode_debug',
-            description: 'Start debugging session for a specific project. ⏱️ Can run indefinitely - do not timeout.',
-            inputSchema: {
-                type: 'object',
-                properties: {
-                    xcodeproj: {
-                        type: 'string',
-                        description: preferredXcodeproj
-                            ? `Absolute path to the .xcodeproj file (or .xcworkspace if available) - defaults to ${preferredXcodeproj}`
-                            : 'Absolute path to the .xcodeproj file (or .xcworkspace if available) - e.g., /path/to/project.xcodeproj',
-                    },
-                    scheme: {
-                        type: 'string',
-                        description: preferredScheme
-                            ? `Scheme name (optional) - defaults to ${preferredScheme}`
-                            : 'Scheme name (optional)',
-                    },
-                    skip_building: {
-                        type: 'boolean',
-                        description: 'Whether to skip building',
-                    },
-                },
-                required: preferredXcodeproj ? [] : ['xcodeproj'],
             },
         },
         {
@@ -729,20 +653,6 @@ export function getToolDefinitions(options = { includeClean: true }) {
             },
         },
         {
-            name: 'xcode_refresh_project',
-            description: 'Refresh/reload an Xcode project by closing and reopening it to pick up external changes like modified .xctestplan files',
-            inputSchema: {
-                type: 'object',
-                properties: {
-                    xcodeproj: {
-                        type: 'string',
-                        description: 'Absolute path to the .xcodeproj file (or .xcworkspace if available) to refresh',
-                    },
-                },
-                required: ['xcodeproj'],
-            },
-        },
-        {
             name: 'xcode_get_test_targets',
             description: 'Get information about test targets in a project, including names and identifiers',
             inputSchema: {
@@ -755,128 +665,7 @@ export function getToolDefinitions(options = { includeClean: true }) {
                 },
                 required: ['xcodeproj'],
             },
-        },
-        {
-            name: 'webview_start_proxy',
-            description: 'Start ios_webkit_debug_proxy for a specific simulator or device',
-            cliName: 'webview:proxy',
-            cliAliases: ['webview-start-proxy'],
-            cliHidden: true,
-            inputSchema: {
-                type: 'object',
-                properties: {
-                    udid: {
-                        type: 'string',
-                        description: 'Target simulator/device UDID. Defaults to the first booted target.',
-                    },
-                    port: {
-                        type: 'number',
-                        description: 'Base port for inspectable tabs (device list uses port-1). Defaults to 9222.',
-                    },
-                    foreground: {
-                        type: 'boolean',
-                        description: 'Run ios_webkit_debug_proxy in the foreground (stream logs).',
-                    },
-                },
-                required: [],
-            },
-        },
-        {
-            name: 'webview_stop_proxy',
-            description: 'Stop a running ios_webkit_debug_proxy instance for the provided UDID',
-            cliName: 'webview:proxy --stop',
-            cliAliases: ['webview-stop-proxy'],
-            cliHidden: true,
-            inputSchema: {
-                type: 'object',
-                properties: {
-                    udid: {
-                        type: 'string',
-                        description: 'Target simulator/device UDID to stop.',
-                    },
-                },
-                required: ['udid'],
-            },
-        },
-        {
-            name: 'webview_list_targets',
-            description: 'List inspectable WKWebView or Safari targets exposed via ios_webkit_debug_proxy',
-            cliName: 'webview:list',
-            cliAliases: ['webview-list'],
-            cliHidden: true,
-            inputSchema: {
-                type: 'object',
-                properties: {
-                    udid: {
-                        type: 'string',
-                        description: 'Optional UDID to scope the listing. Defaults to the first booted target.',
-                    },
-                    port: {
-                        type: 'number',
-                        description: 'Base port for inspectable tabs (device list uses port-1). Defaults to 9222.',
-                    },
-                },
-                required: [],
-            },
-        },
-        {
-            name: 'webview_eval',
-            description: 'Evaluate JavaScript inside a WKWebView/Safari target exposed via ios_webkit_debug_proxy',
-            cliName: 'webview:eval',
-            cliAliases: ['webview-eval'],
-            cliHidden: true,
-            inputSchema: {
-                type: 'object',
-                properties: {
-                    udid: {
-                        type: 'string',
-                        description: 'Target simulator/device UDID.',
-                    },
-                    target_id_or_url: {
-                        type: 'string',
-                        description: 'Page identifier or URL substring to select the target.',
-                    },
-                    expr: {
-                        type: 'string',
-                        description: 'JavaScript expression to evaluate.',
-                    },
-                    port: {
-                        type: 'number',
-                        description: 'Base port (tabs). Defaults to 9222.',
-                    },
-                    timeout_ms: {
-                        type: 'number',
-                        description: 'Timeout in milliseconds for the evaluation (default 5000).',
-                    },
-                },
-                required: ['udid', 'target_id_or_url', 'expr'],
-            },
-        },
-        {
-            name: 'webview_open_ui',
-            description: 'Open the ios_webkit_debug_proxy device or page inspector UI in the default browser',
-            cliName: 'webview:open',
-            cliAliases: ['webview-open'],
-            cliHidden: true,
-            inputSchema: {
-                type: 'object',
-                properties: {
-                    udid: {
-                        type: 'string',
-                        description: 'Optional UDID to scope the UI. Defaults to first booted.',
-                    },
-                    port: {
-                        type: 'number',
-                        description: 'Base port for tabs (device list uses port-1). Defaults to 9222.',
-                    },
-                    page_id: {
-                        type: 'string',
-                        description: 'Optional page identifier to open directly.',
-                    },
-                },
-                required: [],
-            },
-        },
+        }
     ];
     // Conditionally add the clean tool
     if (includeClean) {

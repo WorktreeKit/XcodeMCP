@@ -12,7 +12,6 @@ import XCResultTools from './tools/XCResultTools.js';
 import SimulatorTools from './tools/SimulatorTools.js';
 import SimulatorLogTools from './tools/SimulatorLogTools.js';
 import SimulatorUiTools from './tools/SimulatorUiTools.js';
-import WebviewTools from './tools/WebviewTools.js';
 import PathValidator from './utils/PathValidator.js';
 import { EnvironmentValidator } from './utils/EnvironmentValidator.js';
 import Logger from './utils/Logger.js';
@@ -26,13 +25,10 @@ export class XcodeServer {
     includeClean;
     preferredScheme;
     preferredXcodeproj;
-    testJobs;
-    testJobRetentionMs = 15 * 60 * 1000; // 15 minutes
     constructor(options = {}) {
         this.includeClean = options.includeClean ?? true;
         this.preferredScheme = options.preferredScheme;
         this.preferredXcodeproj = options.preferredXcodeproj;
-        this.testJobs = new Map();
         // Log preferred values if set
         if (this.preferredScheme) {
             Logger.info(`Using preferred scheme: ${this.preferredScheme}`);
@@ -175,8 +171,8 @@ export class XcodeServer {
         if (toolName === 'xcode_health_check') {
             return { blocked: false, degraded: false };
         }
-        const buildTools = ['xcode_build', 'xcode_test', 'xcode_build_and_run', 'xcode_debug', 'xcode_clean'];
-        const xcodeTools = [...buildTools, 'xcode_open_project', 'xcode_get_schemes', 'xcode_set_active_scheme',
+        const buildTools = ['xcode_build', 'xcode_test', 'xcode_build_and_run', 'xcode_clean'];
+        const xcodeTools = [...buildTools, 'xcode_get_schemes', 'xcode_set_active_scheme',
             'xcode_get_run_destinations', 'xcode_get_workspace_info', 'xcode_get_projects'];
         const simulatorTools = [
             'list_sims',
@@ -364,40 +360,6 @@ export class XcodeServer {
                     return validationError;
                 }
                 switch (name) {
-                    case 'xcode_open_project':
-                        if (!args.xcodeproj) {
-                            throw new McpError(ErrorCode.InvalidParams, this.preferredXcodeproj
-                                ? `Missing required parameter: xcodeproj (no preferred value was applied)\n\n💡 Expected: absolute path to .xcodeproj or .xcworkspace file`
-                                : `Missing required parameter: xcodeproj\n\n💡 Expected: absolute path to .xcodeproj or .xcworkspace file`);
-                        }
-                        const result = await ProjectTools.openProject(args.xcodeproj);
-                        if (result && 'content' in result && result.content?.[0] && 'text' in result.content[0]) {
-                            const textContent = result.content[0];
-                            if (textContent.type === 'text' && typeof textContent.text === 'string') {
-                                if (!textContent.text.includes('Error') && !textContent.text.includes('does not exist')) {
-                                    this.currentProjectPath = args.xcodeproj;
-                                }
-                            }
-                        }
-                        return result;
-                    case 'xcode_close_project':
-                        if (!args.xcodeproj) {
-                            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
-                        }
-                        try {
-                            const validationError = PathValidator.validateProjectPath(args.xcodeproj);
-                            if (validationError)
-                                return validationError;
-                            const closeResult = await ProjectTools.closeProject(args.xcodeproj);
-                            this.currentProjectPath = null;
-                            return closeResult;
-                        }
-                        catch (closeError) {
-                            // Ensure close project never crashes the server
-                            Logger.error('Close project error (handled):', closeError);
-                            this.currentProjectPath = null;
-                            return { content: [{ type: 'text', text: 'Project close attempted - may have completed with dialogs' }] };
-                        }
                     case 'xcode_build':
                         if (!args.xcodeproj) {
                             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
@@ -416,13 +378,9 @@ export class XcodeServer {
                         return await BuildTools.clean(args.xcodeproj, this.openProject.bind(this));
                     case 'xcode_test': {
                         const request = this.prepareTestRequest(args);
-                        return this.startAsyncTestJob(request);
+                        const runOptions = this.cloneTestOptions(request.options);
+                        return await this.executeTestRun(request, this.openProject.bind(this), runOptions);
                     }
-                    case 'xcode_test_status':
-                        if (!args.job_id || typeof args.job_id !== 'string') {
-                            return { content: [{ type: 'text', text: 'Error: job_id parameter is required' }] };
-                        }
-                        return this.getTestJobStatus(args.job_id);
                     case 'xcode_build_and_run':
                         if (!args.xcodeproj) {
                             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
@@ -431,14 +389,6 @@ export class XcodeServer {
                             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: scheme`);
                         }
                         return await BuildTools.run(args.xcodeproj, args.scheme, args.command_line_arguments || [], this.openProject.bind(this));
-                    case 'xcode_debug':
-                        if (!args.xcodeproj) {
-                            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
-                        }
-                        if (!args.scheme) {
-                            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: scheme`);
-                        }
-                        return await BuildTools.debug(args.xcodeproj, args.scheme, args.skip_building, this.openProject.bind(this));
                     case 'xcode_stop':
                         if (!args.xcodeproj) {
                             return { content: [{ type: 'text', text: 'Error: xcodeproj parameter is required' }] };
@@ -673,104 +623,6 @@ export class XcodeServer {
                             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
                         }
                         return await ProjectTools.getTestTargets(args.xcodeproj);
-                    case 'xcode_refresh_project':
-                        if (!args.xcodeproj) {
-                            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
-                        }
-                        // Close and reopen the project to refresh it
-                        await ProjectTools.closeProject(args.xcodeproj);
-                        const refreshResult = await ProjectTools.openProjectAndWaitForLoad(args.xcodeproj);
-                        return {
-                            content: [{
-                                    type: 'text',
-                                    text: `Project refreshed: ${refreshResult.content?.[0]?.type === 'text' ? refreshResult.content[0].text : 'Completed'}`
-                                }]
-                        };
-                    case 'webview_start_proxy':
-                        {
-                            const startArgs = {};
-                            if (typeof args.udid === 'string' && args.udid) {
-                                startArgs.udid = args.udid;
-                            }
-                            if (args.port !== undefined) {
-                                const parsedPort = typeof args.port === 'number' ? args.port : Number(args.port);
-                                if (!Number.isNaN(parsedPort)) {
-                                    startArgs.port = parsedPort;
-                                }
-                            }
-                            if (args.foreground === true || args.foreground === 'true') {
-                                startArgs.foreground = true;
-                            }
-                            return await WebviewTools.startProxy(startArgs);
-                        }
-                    case 'webview_stop_proxy':
-                        if (!args.udid || typeof args.udid !== 'string') {
-                            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: udid`);
-                        }
-                        return await WebviewTools.stopProxy({ udid: args.udid });
-                    case 'webview_list_targets':
-                        {
-                            const listArgs = {};
-                            if (typeof args.udid === 'string' && args.udid) {
-                                listArgs.udid = args.udid;
-                            }
-                            if (args.port !== undefined) {
-                                const parsedPort = typeof args.port === 'number' ? args.port : Number(args.port);
-                                if (!Number.isNaN(parsedPort)) {
-                                    listArgs.port = parsedPort;
-                                }
-                            }
-                            return await WebviewTools.listTargets(listArgs);
-                        }
-                    case 'webview_eval':
-                        if (!args.udid || typeof args.udid !== 'string') {
-                            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: udid`);
-                        }
-                        if (!args.target_id_or_url || typeof args.target_id_or_url !== 'string') {
-                            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: target_id_or_url`);
-                        }
-                        if (!args.expr || typeof args.expr !== 'string') {
-                            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: expr`);
-                        }
-                        {
-                            const evalArgs = {
-                                udid: args.udid,
-                                target_id_or_url: args.target_id_or_url,
-                                expr: args.expr,
-                            };
-                            if (args.port !== undefined) {
-                                const parsedPort = typeof args.port === 'number' ? args.port : Number(args.port);
-                                if (!Number.isNaN(parsedPort)) {
-                                    evalArgs.port = parsedPort;
-                                }
-                            }
-                            if (args.timeout_ms !== undefined) {
-                                const parsedTimeout = typeof args.timeout_ms === 'number'
-                                    ? args.timeout_ms
-                                    : Number(args.timeout_ms);
-                                if (!Number.isNaN(parsedTimeout)) {
-                                    evalArgs.timeout_ms = parsedTimeout;
-                                }
-                            }
-                            return await WebviewTools.evaluate(evalArgs);
-                        }
-                    case 'webview_open_ui':
-                        {
-                            const openArgs = {};
-                            if (typeof args.udid === 'string' && args.udid) {
-                                openArgs.udid = args.udid;
-                            }
-                            if (args.port !== undefined) {
-                                const parsedPort = typeof args.port === 'number' ? args.port : Number(args.port);
-                                if (!Number.isNaN(parsedPort)) {
-                                    openArgs.port = parsedPort;
-                                }
-                            }
-                            if (typeof args.page_id === 'string' && args.page_id) {
-                                openArgs.page_id = args.page_id;
-                            }
-                            return await WebviewTools.openUi(openArgs);
-                        }
                     default:
                         throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
                 }
@@ -927,38 +779,6 @@ export class XcodeServer {
                 return validationError;
             }
             switch (name) {
-                case 'xcode_open_project':
-                    if (!args.xcodeproj) {
-                        throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj\n\n💡 Expected: absolute path to .xcodeproj or .xcworkspace file`);
-                    }
-                    const result = await ProjectTools.openProject(args.xcodeproj);
-                    if (result && 'content' in result && result.content?.[0] && 'text' in result.content[0]) {
-                        const textContent = result.content[0];
-                        if (textContent.type === 'text' && typeof textContent.text === 'string') {
-                            if (!textContent.text.includes('Error') && !textContent.text.includes('does not exist')) {
-                                this.currentProjectPath = args.xcodeproj;
-                            }
-                        }
-                    }
-                    return result;
-                case 'xcode_close_project':
-                    if (!args.xcodeproj) {
-                        throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
-                    }
-                    try {
-                        const validationError = PathValidator.validateProjectPath(args.xcodeproj);
-                        if (validationError)
-                            return validationError;
-                        const closeResult = await ProjectTools.closeProject(args.xcodeproj);
-                        this.currentProjectPath = null;
-                        return closeResult;
-                    }
-                    catch (closeError) {
-                        // Ensure close project never crashes the server
-                        Logger.error('Close project error (handled):', closeError);
-                        this.currentProjectPath = null;
-                        return { content: [{ type: 'text', text: 'Project close attempted - may have completed with dialogs' }] };
-                    }
                 case 'xcode_build':
                     if (!args.xcodeproj) {
                         throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
@@ -977,13 +797,9 @@ export class XcodeServer {
                     return await BuildTools.clean(args.xcodeproj, this.openProject.bind(this));
                 case 'xcode_test': {
                     const request = this.prepareTestRequest(args);
-                    return this.startAsyncTestJob(request);
+                    const runOptions = this.cloneTestOptions(request.options);
+                    return await this.executeTestRun(request, this.openProject.bind(this), runOptions);
                 }
-                case 'xcode_test_status':
-                    if (!args.job_id || typeof args.job_id !== 'string') {
-                        throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: job_id`);
-                    }
-                    return this.getTestJobStatus(args.job_id);
                 case 'xcode_build_and_run':
                     if (!args.xcodeproj) {
                         throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
@@ -992,14 +808,6 @@ export class XcodeServer {
                         throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: scheme`);
                     }
                     return await BuildTools.run(args.xcodeproj, args.scheme, args.command_line_arguments || [], this.openProject.bind(this));
-                case 'xcode_debug':
-                    if (!args.xcodeproj) {
-                        throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
-                    }
-                    if (!args.scheme) {
-                        throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: scheme`);
-                    }
-                    return await BuildTools.debug(args.xcodeproj, args.scheme, args.skip_building, this.openProject.bind(this));
                 case 'xcode_stop':
                     if (!args.xcodeproj) {
                         throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
@@ -1234,19 +1042,6 @@ export class XcodeServer {
                         throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
                     }
                     return await ProjectTools.getTestTargets(args.xcodeproj);
-                case 'xcode_refresh_project':
-                    if (!args.xcodeproj) {
-                        throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
-                    }
-                    // Close and reopen the project to refresh it
-                    await ProjectTools.closeProject(args.xcodeproj);
-                    const refreshResult = await ProjectTools.openProjectAndWaitForLoad(args.xcodeproj);
-                    return {
-                        content: [{
-                                type: 'text',
-                                text: `Project refreshed: ${refreshResult.content?.[0]?.type === 'text' ? refreshResult.content[0].text : 'Completed'}`
-                            }]
-                    };
                 default:
                     throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
             }
@@ -1362,32 +1157,12 @@ export class XcodeServer {
         if (selectedClasses) {
             options.selectedTestClasses = selectedClasses;
         }
-        const parseBooleanFlag = (value) => {
-            if (typeof value === 'boolean') {
-                return value;
-            }
-            if (typeof value === 'string') {
-                const normalized = value.trim().toLowerCase();
-                if (['true', '1', 'yes', 'y'].includes(normalized)) {
-                    return true;
-                }
-                if (['false', '0', 'no', 'n'].includes(normalized)) {
-                    return false;
-                }
-            }
-            return undefined;
-        };
-        const asyncFlagSource = args.run_async ?? args.async ?? args.background;
-        const asyncMode = parseBooleanFlag(asyncFlagSource);
         const request = {
             projectPath,
             destination,
             commandLineArguments,
             options,
         };
-        if (asyncMode) {
-            request.asyncMode = asyncMode;
-        }
         return request;
     }
     async getVersionInfo() {
@@ -1464,159 +1239,11 @@ export class XcodeServer {
             ],
         };
     }
-    cleanupExpiredJobs() {
-        const now = Date.now();
-        for (const [jobId, job] of this.testJobs.entries()) {
-            if (job.status !== 'running' && now - job.updatedAt > this.testJobRetentionMs) {
-                this.testJobs.delete(jobId);
-                Logger.debug(`Cleaned up completed test job ${jobId} (age ${(now - job.updatedAt) / 1000}s).`);
-            }
-        }
-    }
-    async startAsyncTestJob(request) {
-        if (request.asyncMode) {
-            return this.startBackgroundTestJob(request);
-        }
-        return this.runSynchronousTestJob(request);
-    }
-    startBackgroundTestJob(request) {
-        this.cleanupExpiredJobs();
-        const jobId = `${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 10)}`;
-        const optionsCopy = this.cloneTestOptions(request.options);
-        const storedRequest = {
-            projectPath: request.projectPath,
-            destination: request.destination,
-            commandLineArguments: [...request.commandLineArguments],
-        };
-        const storedOptions = this.cloneTestOptions(optionsCopy);
-        if (storedOptions) {
-            storedRequest.options = storedOptions;
-        }
-        const jobRecord = {
-            status: 'running',
-            startedAt: Date.now(),
-            updatedAt: Date.now(),
-            lastAccessed: Date.now(),
-            request: storedRequest,
-        };
-        this.testJobs.set(jobId, jobRecord);
-        const openProject = this.openProject.bind(this);
-        setImmediate(async () => {
-            try {
-                const runOptions = this.cloneTestOptions(optionsCopy);
-                const result = await this.executeTestRun(request, openProject, runOptions);
-                const job = this.testJobs.get(jobId);
-                if (job) {
-                    job.status = 'succeeded';
-                    job.result = result;
-                    job.updatedAt = Date.now();
-                    job.completedAt = job.updatedAt;
-                    job.lastAccessed = job.updatedAt;
-                }
-            }
-            catch (error) {
-                const job = this.testJobs.get(jobId);
-                if (job) {
-                    job.status = 'failed';
-                    job.error = error instanceof Error ? error.message : String(error);
-                    job.updatedAt = Date.now();
-                    job.completedAt = job.updatedAt;
-                    job.lastAccessed = job.updatedAt;
-                }
-            }
-        });
-        return {
-            content: [
-                {
-                    type: 'text',
-                    text: `🟡 TEST JOB STARTED\n\nJob ID: ${jobId}\nStarted: ${new Date(jobRecord.startedAt).toLocaleString()}\nDestination: ${request.destination ?? request.options?.deviceType ?? 'auto-selected'}.`,
-                },
-            ],
-            _meta: {
-                job_id: jobId,
-                status: 'running',
-                started_at: jobRecord.startedAt,
-                destination: request.destination ?? request.options?.deviceType ?? 'auto-selected',
-            },
-        };
-    }
-    async runSynchronousTestJob(request) {
-        const openProject = this.openProject.bind(this);
-        const optionsCopy = this.cloneTestOptions(request.options);
-        const runOptions = this.cloneTestOptions(optionsCopy);
-        return this.executeTestRun(request, openProject, runOptions);
-    }
     async executeTestRun(request, openProject, runOptions) {
         if (runOptions && Object.keys(runOptions).length > 0) {
             BuildTools.setPendingTestOptions(runOptions);
         }
         return await BuildTools.test(request.projectPath, request.destination, [...request.commandLineArguments], openProject, runOptions);
-    }
-    getTestJobStatus(jobId) {
-        this.cleanupExpiredJobs();
-        const job = this.testJobs.get(jobId);
-        if (!job) {
-            return {
-                content: [
-                    {
-                        type: 'text',
-                        text: `❌ No test job found with ID '${jobId}'. It may have completed and been collected.`,
-                    },
-                ],
-                isError: true,
-                _meta: {
-                    job_id: jobId,
-                    status: 'unknown',
-                },
-            };
-        }
-        job.lastAccessed = Date.now();
-        if (job.status === 'running') {
-            return {
-                content: [
-                    {
-                        type: 'text',
-                        text: `🟡 TEST IN PROGRESS\n\nJob ID: ${jobId}\nStarted: ${new Date(job.startedAt).toLocaleString()}\nLast update: ${new Date(job.updatedAt).toLocaleString()}.`,
-                    },
-                ],
-                _meta: {
-                    job_id: jobId,
-                    status: 'running',
-                    started_at: job.startedAt,
-                    updated_at: job.updatedAt,
-                },
-            };
-        }
-        if (job.status === 'succeeded' && job.result) {
-            const combinedContent = job.result.content ? [...job.result.content] : [];
-            job.resultRetrieved = true;
-            return {
-                content: combinedContent,
-                isError: job.result.isError,
-                _meta: {
-                    job_id: jobId,
-                    status: 'succeeded',
-                    started_at: job.startedAt,
-                    completed_at: job.completedAt ?? job.updatedAt,
-                },
-            };
-        }
-        const failureMessage = job.error ?? 'Unknown error';
-        return {
-            content: [
-                {
-                    type: 'text',
-                    text: `❌ Test job ${jobId} failed: ${failureMessage}\nStarted: ${new Date(job.startedAt).toLocaleString()}\nFinished: ${new Date(job.updatedAt).toLocaleString()}.`,
-                },
-            ],
-            isError: true,
-            _meta: {
-                job_id: jobId,
-                status: 'failed',
-                started_at: job.startedAt,
-                completed_at: job.completedAt ?? job.updatedAt,
-            },
-        };
     }
 }
 //# sourceMappingURL=XcodeServer.js.map

@@ -10,8 +10,6 @@ export declare class XcodeServer {
     private includeClean;
     private preferredScheme;
     private preferredXcodeproj;
-    private readonly testJobs;
-    private readonly testJobRetentionMs;
     constructor(options?: {
         includeClean?: boolean;
         preferredScheme?: string;
@@ -66,11 +64,6 @@ export declare class XcodeServer {
     private cloneTestOptions;
     private prepareTestRequest;
     private getVersionInfo;
-    private cleanupExpiredJobs;
-    private startAsyncTestJob;
-    private startBackgroundTestJob;
-    private runSynchronousTestJob;
     private executeTestRun;
-    private getTestJobStatus;
 }
 //# sourceMappingURL=XcodeServer.d.ts.map

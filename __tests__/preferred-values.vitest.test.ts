@@ -56,14 +56,11 @@ describe('Preferred Values', () => {
       });
       
       const toolsWithXcodeproj = [
-        'xcode_open_project',
-        'xcode_close_project',
         'xcode_build',
         'xcode_get_schemes',
         'xcode_set_active_scheme',
         'xcode_test',
         'xcode_build_and_run',
-        'xcode_debug',
         'xcode_stop',
         'find_xcresults',
         'xcode_get_run_destinations',
@@ -191,14 +188,6 @@ describe('Preferred Values', () => {
       tools = getToolDefinitions({ preferredXcodeproj: 'MyApp.xcodeproj' });
       testTool = tools.find(t => t.name === 'xcode_test');
       expect(testTool!.inputSchema.required).toEqual(['scheme']);
-    });
-
-    it('should expose optional run_async flag for xcode_test', () => {
-      const tools = getToolDefinitions({});
-      const testTool = tools.find(t => t.name === 'xcode_test');
-      expect(testTool).toBeDefined();
-      expect(testTool!.inputSchema.properties.run_async).toBeDefined();
-      expect(testTool!.inputSchema.properties.run_async.type).toBe('boolean');
     });
 
   it('should correctly handle xcode_set_active_scheme', () => {

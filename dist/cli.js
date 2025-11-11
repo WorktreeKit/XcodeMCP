@@ -6,7 +6,6 @@ import { fileURLToPath } from 'url';
 import { XcodeServer } from './XcodeServer.js';
 import Logger from './utils/Logger.js';
 import { getToolDefinitions } from './shared/toolDefinitions.js';
-import { registerWebviewCommands } from './cli/commands/webview/register.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 /**
  * Load package.json to get version info
@@ -36,24 +35,25 @@ function schemaPropertyToOption(name, property) {
     }
     return option;
 }
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-function extractJobIdFromResult(result) {
-    if (!result || !Array.isArray(result.content))
-        return null;
-    for (const item of result.content) {
-        if (item?.type === 'text' && typeof item.text === 'string') {
-            const match = item.text.match(/Job ID:\s+([A-Za-z0-9\-]+)/);
-            if (match && match[1]) {
-                return match[1];
-            }
+function getArgValue(flag) {
+    const equalsMatch = process.argv.find(arg => arg.startsWith(`${flag}=`));
+    if (equalsMatch) {
+        const [, value = ''] = equalsMatch.split('=');
+        const trimmed = value.trim();
+        return trimmed.length > 0 ? trimmed : undefined;
+    }
+    const index = process.argv.indexOf(flag);
+    if (index !== -1 && process.argv.length > index + 1) {
+        const next = process.argv[index + 1];
+        if (next && !next.startsWith('-')) {
+            const trimmed = next.trim();
+            return trimmed.length > 0 ? trimmed : undefined;
         }
     }
-    return null;
+    return undefined;
 }
-function isTestJobRunning(result) {
-    if (!result || !Array.isArray(result.content))
-        return false;
-    return result.content.some(item => item?.type === 'text' && typeof item.text === 'string' && item.text.includes('TEST IN PROGRESS'));
+function hasFlag(flag) {
+    return process.argv.includes(flag);
 }
 function detectError(toolName, result) {
     if (!result)
@@ -99,26 +99,6 @@ function detectError(toolName, result) {
         }
     }
     return false;
-}
-async function waitForTestJobCompletion(server, jobId, jsonOutput, verbose) {
-    const pollIntervalMs = 5000;
-    if (!jsonOutput) {
-        console.error(`⏳ Waiting for test job ${jobId} to complete...`);
-    }
-    while (true) {
-        await delay(pollIntervalMs);
-        const status = await server.callToolDirect('xcode_test_status', { job_id: jobId });
-        if (isTestJobRunning(status)) {
-            if (!jsonOutput && verbose) {
-                console.error(`  • still running (${new Date().toLocaleTimeString()})`);
-            }
-            continue;
-        }
-        if (!jsonOutput) {
-            console.error(`✅ Test job ${jobId} completed.`);
-        }
-        return status;
-    }
 }
 /**
  * Parse command line arguments into tool arguments
@@ -195,39 +175,7 @@ function formatResult(result, jsonOutput) {
 async function main() {
     try {
         const pkg = await loadPackageJson();
-        // Check for --no-clean argument early to configure both server and tools
-        const noCleanArg = process.argv.includes('--no-clean');
-        const includeClean = !noCleanArg;
-        // Parse preferred values from command-line or environment
-        const preferredScheme = process.env.XCODE_MCP_PREFERRED_SCHEME ||
-            process.argv.find(arg => arg.startsWith('--preferred-scheme='))?.split('=')[1];
-        const preferredXcodeproj = process.env.XCODE_MCP_PREFERRED_XCODEPROJ ||
-            process.argv.find(arg => arg.startsWith('--preferred-xcodeproj='))?.split('=')[1];
-        const serverOptions = { includeClean };
-        if (preferredScheme)
-            serverOptions.preferredScheme = preferredScheme;
-        if (preferredXcodeproj)
-            serverOptions.preferredXcodeproj = preferredXcodeproj;
-        const server = new XcodeServer(serverOptions);
-        // Get tool definitions from shared source to ensure CLI is always in sync with MCP
-        const toolOptions = { includeClean };
-        if (preferredScheme)
-            toolOptions.preferredScheme = preferredScheme;
-        if (preferredXcodeproj)
-            toolOptions.preferredXcodeproj = preferredXcodeproj;
-        const tools = getToolDefinitions(toolOptions);
-        // Build description with preferred values if set
-        let description = `Command-line interface for Xcode automation and control`;
-        if (preferredScheme || preferredXcodeproj) {
-            description += '\n\n📌 Preferred Values:';
-            if (preferredScheme) {
-                description += `\n  • Scheme: ${preferredScheme}`;
-            }
-            if (preferredXcodeproj) {
-                description += `\n  • Project: ${preferredXcodeproj}`;
-            }
-        }
-        description += `
+        let description = `Command-line interface for Xcode automation and control
 
 📁 Command Categories:
   • Project Management  - Open/close projects, manage schemes and workspaces
@@ -254,6 +202,53 @@ async function main() {
             .option('--no-clean', 'Disable the clean tool', false)
             .option('--preferred-scheme <scheme>', 'Set a preferred scheme to use as default')
             .option('--preferred-xcodeproj <path>', 'Set a preferred xcodeproj/xcworkspace to use as default');
+        let includeClean = true;
+        let cliPreferredScheme;
+        let cliPreferredXcodeproj;
+        if (typeof program.parseOptions === 'function') {
+            program.parseOptions(process.argv);
+            const globalOptions = program.opts();
+            includeClean = globalOptions.clean !== false;
+            if (typeof globalOptions.preferredScheme === 'string') {
+                const trimmed = globalOptions.preferredScheme.trim();
+                cliPreferredScheme = trimmed.length > 0 ? trimmed : undefined;
+            }
+            if (typeof globalOptions.preferredXcodeproj === 'string') {
+                const trimmed = globalOptions.preferredXcodeproj.trim();
+                cliPreferredXcodeproj = trimmed.length > 0 ? trimmed : undefined;
+            }
+        }
+        else {
+            includeClean = !hasFlag('--no-clean');
+            cliPreferredScheme = getArgValue('--preferred-scheme');
+            cliPreferredXcodeproj = getArgValue('--preferred-xcodeproj');
+        }
+        const envPreferredScheme = process.env.XCODE_MCP_PREFERRED_SCHEME?.trim();
+        const envPreferredXcodeproj = process.env.XCODE_MCP_PREFERRED_XCODEPROJ?.trim();
+        const preferredScheme = cliPreferredScheme || envPreferredScheme;
+        const preferredXcodeproj = cliPreferredXcodeproj || envPreferredXcodeproj;
+        if (preferredScheme || preferredXcodeproj) {
+            description += '\n\n📌 Preferred Values:';
+            if (preferredScheme) {
+                description += `\n  • Scheme: ${preferredScheme}`;
+            }
+            if (preferredXcodeproj) {
+                description += `\n  • Project: ${preferredXcodeproj}`;
+            }
+            program.description(description);
+        }
+        const serverOptions = { includeClean };
+        if (preferredScheme)
+            serverOptions.preferredScheme = preferredScheme;
+        if (preferredXcodeproj)
+            serverOptions.preferredXcodeproj = preferredXcodeproj;
+        const server = new XcodeServer(serverOptions);
+        const toolOptions = { includeClean };
+        if (preferredScheme)
+            toolOptions.preferredScheme = preferredScheme;
+        if (preferredXcodeproj)
+            toolOptions.preferredXcodeproj = preferredXcodeproj;
+        const tools = getToolDefinitions(toolOptions);
         // Add global help command
         program
             .command('help')
@@ -270,7 +265,7 @@ async function main() {
             console.log('');
             // Define command categories
             const buildAndRunCommands = [
-                'build', 'build-and-run', 'debug', 'stop',
+                'build', 'build-and-run', 'stop',
                 'get-run-destinations'
             ];
             // Add clean only if not disabled
@@ -279,7 +274,6 @@ async function main() {
             }
             const categories = {
                 'Project Management': [
-                    'open-project', 'close-project', 'refresh-project',
                     'get-schemes', 'set-active-scheme', 'get-projects',
                     'get-workspace-info', 'open-file'
                 ],
@@ -295,13 +289,6 @@ async function main() {
                 ],
                 'System & Diagnostics': [
                     'health-check', 'list-tools', 'help'
-                ],
-                'WebView': [
-                    'webview:proxy',
-                    'webview:proxy --stop',
-                    'webview:list',
-                    'webview:eval',
-                    'webview:open'
                 ]
             };
             // Create a map of command name to tool for quick lookup
@@ -340,8 +327,6 @@ async function main() {
             console.log('⏱️  Note: Build, test, and run commands can take minutes to hours.');
             console.log('   The CLI handles long operations automatically - do not timeout.');
         });
-        // Register WebView-specific commands (custom CLI implementations)
-        registerWebviewCommands(program);
         // Dynamically create subcommands for each tool
         for (const tool of tools) {
             if (tool.cliHidden) {
@@ -430,13 +415,6 @@ async function main() {
                     }
                     // Call the tool directly on server
                     let result = await server.callToolDirect(tool.name, toolArgs);
-                    // For xcode_test, handle asynchronous job polling transparently for the CLI
-                    if (tool.name === 'xcode_test') {
-                        const jobId = extractJobIdFromResult(result);
-                        if (jobId) {
-                            result = await waitForTestJobCompletion(server, jobId, program.opts().json, cmd.opts().verbose ?? false);
-                        }
-                    }
                     // Output the result
                     const output = formatResult(result, program.opts().json);
                     const hasError = detectError(tool.name, result);

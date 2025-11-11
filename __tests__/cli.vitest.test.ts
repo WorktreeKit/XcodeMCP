@@ -79,8 +79,6 @@ describe('CLI Tool Argument Parsing', () => {
 describe('CLI Tool Registration', () => {
   it('should register hardcoded tools as commands', async () => {
     // The CLI currently has hardcoded tools:
-    // - xcode_open_project -> open-project
-    // - xcode_close_project -> close-project  
     // - xcode_build -> build
     // - xcode_health_check -> health-check
     // This is a temporary solution as noted in the CLI code

@@ -27,12 +27,10 @@ describe('XcodeMCP Server Functional Tests', () => {
   test('should validate tool definitions completeness', () => {
     // Test the tool definitions without instantiating the class
     const expectedTools = [
-      'xcode_open_project',
       'xcode_build', 
       'xcode_clean',
       'xcode_test',
       'xcode_run',
-      'xcode_debug',
       'xcode_stop',
       'xcode_get_schemes',
       'xcode_get_run_destinations',
@@ -42,7 +40,7 @@ describe('XcodeMCP Server Functional Tests', () => {
       'xcode_open_file'
     ];
 
-    expect(expectedTools.length).toBe(13);
+    expect(expectedTools.length).toBe(11);
     expect(expectedTools).toContain('xcode_build');
     expect(expectedTools).toContain('xcode_test');
     expect(expectedTools).toContain('xcode_run');

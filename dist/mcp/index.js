@@ -59,34 +59,6 @@ export class McpLibrary extends EventEmitter {
         // Fallback to hardcoded tool definitions
         return [
             {
-                name: 'xcode_open_project',
-                description: 'Open an Xcode project or workspace',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        xcodeproj: {
-                            type: 'string',
-                            description: 'Absolute path to the .xcodeproj file (or .xcworkspace if available) - e.g., /path/to/project.xcodeproj',
-                        },
-                    },
-                    required: ['xcodeproj'],
-                },
-            },
-            {
-                name: 'xcode_close_project',
-                description: 'Close the currently active Xcode project or workspace (automatically stops any running actions first)',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        xcodeproj: {
-                            type: 'string',
-                            description: 'Absolute path to the .xcodeproj file (or .xcworkspace if available) - e.g., /path/to/project.xcodeproj',
-                        },
-                    },
-                    required: ['xcodeproj'],
-                },
-            },
-            {
                 name: 'xcode_build',
                 description: 'Build a specific Xcode project or workspace with the specified scheme. If destination is not provided, uses the currently active destination.',
                 inputSchema: {
@@ -194,28 +166,6 @@ export class McpLibrary extends EventEmitter {
                         },
                     },
                     required: ['xcodeproj', 'scheme'],
-                },
-            },
-            {
-                name: 'xcode_debug',
-                description: 'Start debugging session for a specific project',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        xcodeproj: {
-                            type: 'string',
-                            description: 'Absolute path to the .xcodeproj file (or .xcworkspace if available) - e.g., /path/to/project.xcodeproj',
-                        },
-                        scheme: {
-                            type: 'string',
-                            description: 'Scheme name (optional)',
-                        },
-                        skip_building: {
-                            type: 'boolean',
-                            description: 'Whether to skip building',
-                        },
-                    },
-                    required: ['xcodeproj'],
                 },
             },
             {

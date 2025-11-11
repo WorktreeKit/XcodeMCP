@@ -1,7 +1,16 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { promisify } from 'util';
 
 const execAsync = promisify(require('child_process').exec);
+const PROJECT_ROOT = process.cwd();
+const CLI_BIN = 'node dist/cli.js';
+
+beforeAll(async () => {
+  await execAsync('npm run build', {
+    cwd: PROJECT_ROOT,
+    timeout: 30000
+  });
+});
 
 describe('CLI Parameter Consistency', () => {
   it('should accept new kebab-case parameters for all affected commands', async () => {
@@ -22,24 +31,22 @@ describe('CLI Parameter Consistency', () => {
         command: 'build-and-run --xcodeproj /fake/project.xcodeproj --scheme TestScheme --command-line-arguments arg1',
         expectedError: 'Project file does not exist', // Project not found, but parameters accepted
       },
-      {
-        command: 'debug --xcodeproj /fake/project.xcodeproj --scheme TestScheme --skip-building',
-        expectedError: 'Project file does not exist', // Project not found, but parameters accepted
-      },
     ];
 
     for (const { command, expectedError } of commands) {
-      const result = await execAsync(`npm run build && node dist/cli.js ${command}`, {
-        cwd: process.cwd(),
+      const result = await execAsync(`${CLI_BIN} ${command}`, {
+        cwd: PROJECT_ROOT,
         timeout: 10000
       }).catch(err => err);
 
+      const combined = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+
       // Should not complain about unknown options or missing required parameters
-      expect(result.stderr).not.toContain('unknown option');
-      expect(result.stderr).not.toContain('Missing required parameter');
+      expect(combined).not.toContain('unknown option');
+      expect(combined).not.toContain('Missing required parameter');
       
       // Should fail with expected error (file/project not found)
-      expect(result.stderr).toContain(expectedError);
+      expect(combined).toContain(expectedError);
     }
   }, 60000);
 
@@ -49,17 +56,17 @@ describe('CLI Parameter Consistency', () => {
       'open-file --lineNumber 10',
       'set-active-scheme --schemeName TestScheme',
       'test --commandLineArguments arg1',
-      'debug --skipBuilding',
     ];
 
     for (const command of commands) {
-      const result = await execAsync(`npm run build && node dist/cli.js ${command}`, {
-        cwd: process.cwd(),
+      const result = await execAsync(`${CLI_BIN} ${command}`, {
+        cwd: PROJECT_ROOT,
         timeout: 10000
       }).catch(err => err);
 
       // Should show unknown option error
-      expect(result.stderr).toContain('unknown option');
+      const combined = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+      expect(combined).toContain('unknown option');
     }
   }, 60000);
 
@@ -69,14 +76,13 @@ describe('CLI Parameter Consistency', () => {
       { command: 'set-active-scheme --help', expected: ['--scheme-name'] },
       { command: 'test --help', expected: ['--command-line-arguments'] },
       { command: 'build-and-run --help', expected: ['--command-line-arguments'] },
-      { command: 'debug --help', expected: ['--skip-building'] },
       { command: 'xcresult-get-ui-element --help', expected: ['--hierarchy-json-path', '--element-index'] },
       { command: 'xcresult-export-attachment --help', expected: ['--attachment-index'] },
     ];
 
     for (const { command, expected } of commands) {
-      const result = await execAsync(`npm run build && node dist/cli.js ${command}`, {
-        cwd: process.cwd(),
+      const result = await execAsync(`${CLI_BIN} ${command}`, {
+        cwd: PROJECT_ROOT,
         timeout: 10000
       });
 
@@ -94,16 +100,16 @@ describe('CLI Parameter Consistency', () => {
 
   it('should reference CLI command names in help text and usage instructions', async () => {
     // Test that help text references use CLI command names, not internal tool names
-    const result1 = await execAsync('npm run build && node dist/cli.js xcresult-get-ui-element --help', {
-      cwd: process.cwd(),
+    const result1 = await execAsync(`${CLI_BIN} xcresult-get-ui-element --help`, {
+      cwd: PROJECT_ROOT,
       timeout: 10000
     });
     
     expect(result1.stdout).toContain('xcresult-get-ui-hierarchy');
     expect(result1.stdout).not.toContain('xcresult_get_ui_hierarchy');
 
-    const result2 = await execAsync('npm run build && node dist/cli.js xcresult-export-attachment --help', {
-      cwd: process.cwd(),
+    const result2 = await execAsync(`${CLI_BIN} xcresult-export-attachment --help`, {
+      cwd: PROJECT_ROOT,
       timeout: 10000
     });
     
@@ -111,8 +117,8 @@ describe('CLI Parameter Consistency', () => {
     expect(result2.stdout).not.toContain('xcresult_list_attachments');
 
     // Test find-xcresults usage instructions with a real project
-    const result3 = await execAsync('npm run build && node dist/cli.js find-xcresults --xcodeproj __tests__/TestApp/TestApp.xcodeproj', {
-      cwd: process.cwd(),
+    const result3 = await execAsync(`${CLI_BIN} find-xcresults --xcodeproj __tests__/TestApp/TestApp.xcodeproj`, {
+      cwd: PROJECT_ROOT,
       timeout: 10000
     });
     

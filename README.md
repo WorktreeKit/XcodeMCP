@@ -159,53 +159,9 @@ xcodecontrol build --help
 # Use JSON input instead of flags
 xcodecontrol build --json-input '{"xcodeproj": "/path/to/Project.xcodeproj", "scheme": "MyScheme"}'
 
-## WKWebView Inspection
-
-xcodecontrol now bundles first-class tooling for inspecting `WKWebView` content through [`ios_webkit_debug_proxy`](https://github.com/google/ios-webkit-debug-proxy) (IWDP). The CLI and MCP server can launch IWDP, enumerate inspectable pages, evaluate JavaScript, and open the native Web Inspector UI without leaving the terminal.
-
-### Prerequisites
-
-- Enable Web Inspector on the device or simulator: `Settings → Safari → Advanced → Web Inspector`
-- For iOS/iPadOS 16.4 and later, ensure your app sets `WKWebView.isInspectable = true` before loading content
-- Launch the app and navigate to a page inside the `WKWebView` (blank views will not appear)
-- Recommended simulator check: confirm `127.0.0.1` and `::1` resolve to `localhost` in `/etc/hosts`
-
-Install IWDP:
-
-- **macOS**: `brew install ios-webkit-debug-proxy`
-- **Windows (Scoop)**: `scoop install ios-webkit-debug-proxy`
-
-### CLI Examples
-
-```bash
-# Start IWDP bound to the first booted simulator/device (default base port 9222)
-xcodecontrol webview:proxy --udid $(idb list-targets --json | jq -r '.[] | select(.state=="Booted") | .udid' | head -n1)
-
-# List inspectable pages (table or --json for structured output)
-# Use the global --json flag for machine-readable output
-xcodecontrol --json webview:list --udid <UDID>
-
-# Evaluate JavaScript inside the first page whose ID or URL matches
-xcodecontrol webview:eval --udid <UDID> --target /index.html --expr "document.title"
-
-# Open the IWDP device list (or a specific page with --page <id>) in the default browser
-xcodecontrol webview:open --udid <UDID>
-```
-
-Helpful troubleshooting tips when no pages appear:
-
-- Enable Settings → Safari → Advanced → Web Inspector
-- Ensure `WKWebView.isInspectable = true` on iOS/iPadOS 16.4+
-- Load an actual page in the target `WKWebView`
-- On simulators, confirm `localhost` resolves correctly in `/etc/hosts`
-
 # Output results in JSON format
 xcodecontrol --json health-check
 ```
-
-> ℹ️ Prefer the old background behavior? Add `--run-async` (or `{"run_async": true}` when calling the MCP tool directly) to return immediately with a job ID you can poll via `xcode_test_status`.
-
-> ⏳ Already have a job ID? Use `xcodecontrol test-status --job-id <ID> --wait` (or call `xcode_test_status` with `{ "wait": true }`) to have the server poll until the run finishes.
 
 ### Simulator & UI Automation Tools
 
@@ -305,7 +261,6 @@ CLI commands use kebab-case instead of underscores:
 ## Available Tools
 
 **Project Management:**
-- `xcode_open_project` - Open projects and workspaces
 - `xcode_get_workspace_info` - Get workspace status and details
 - `xcode_get_projects` - List projects in workspace
 - `xcode_open_file` - Open files with optional line number
@@ -315,7 +270,6 @@ CLI commands use kebab-case instead of underscores:
 - `xcode_clean` - Clean build artifacts
 - `xcode_test` - Run tests with optional arguments
 - `xcode_build_and_run` - Build and run the active scheme
-- `xcode_debug` - Start debugging session
 - `xcode_stop` - Stop current operation
 
 **Configuration:**

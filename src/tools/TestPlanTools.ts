@@ -335,7 +335,7 @@ export class TestPlanTools {
       return {
         content: [{
           type: 'text',
-          text: `Test plan reload triggered:\n${results.join('\n')}\n\nNote: If Xcode doesn't reload the test plan automatically, you may need to use xcode_refresh_project as a fallback.`
+          text: `Test plan reload triggered:\n${results.join('\n')}\n\nNote: If Xcode doesn't reload the test plan automatically, close and reopen the project manually in Xcode.`
         }]
       };
       
@@ -346,7 +346,7 @@ export class TestPlanTools {
       return {
         content: [{
           type: 'text',
-          text: `Failed to trigger test plan reload: ${errorMessage}\n\nRecommendation: Use xcode_refresh_project tool to ensure test plan changes are loaded.`
+          text: `Failed to trigger test plan reload: ${errorMessage}\n\nRecommendation: Close and reopen the project manually to ensure test plan changes are loaded.`
         }]
       };
     }

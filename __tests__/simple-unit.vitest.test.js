@@ -79,13 +79,10 @@ describe('XcodeMCPServer Basic Tests', () => {
     
     // List of required tools that should be available
     const requiredTools = [
-      'xcode_open_project',
-      'xcode_close_project', 
       'xcode_build',
       'xcode_clean',
       'xcode_test',
       'xcode_build_and_run',
-      'xcode_debug',
       'xcode_stop',
       'xcode_get_schemes',
       'xcode_set_active_scheme',
