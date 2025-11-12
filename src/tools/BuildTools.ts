@@ -12,6 +12,8 @@ import Logger from '../utils/Logger.js';
 import { XCResultParser } from '../utils/XCResultParser.js';
 import { getWorkspaceByPathScript } from '../utils/JXAHelpers.js';
 import type { BuildLogInfo, McpResult, OpenProjectCallback, ParsedBuildResults } from '../types/index.js';
+import BuildLogStore, { BuildLogRecord } from '../utils/BuildLogStore.js';
+import LockManager from '../utils/LockManager.js';
 
 const FAILURE_STATUS_TOKENS = ['fail', 'error', 'cancel', 'terminate', 'abort'];
 
@@ -42,15 +44,52 @@ export class BuildTools {
   }
 
   public static async build(
-    projectPath: string, 
-    schemeName: string, 
-    destination: string | null = null, 
+    projectPath: string,
+    schemeName: string,
+    reason: string,
+    destination: string | null = null,
     openProject: OpenProjectCallback
   ): Promise<McpResult> {
     const validationError = PathValidator.validateProjectPath(projectPath);
     if (validationError) return validationError;
 
     await openProject(projectPath);
+
+    let logRecord: BuildLogRecord | null = null;
+    let lockFooterText: string | null = null;
+    let autoReleaseNote: string | null = null;
+    const applyLockMessaging = (message: string): string => {
+      if (autoReleaseNote) {
+        const note = `🔓 Lock automatically released: ${autoReleaseNote}\nNo manual release command is required for this attempt.`;
+        return `${message}\n\n${note}`;
+      }
+      return LockManager.appendFooter(message, lockFooterText);
+    };
+    const attachLogHint = (message: string): string => {
+      if (!logRecord) return applyLockMessaging(message);
+      const hintLines = [
+        '🪵 Build Log Metadata',
+        `  • Log ID: ${logRecord.id}`,
+        `  • Path: ${logRecord.logPath}`,
+      ];
+      if (logRecord.schemeName) {
+        hintLines.splice(1, 0, `  • Scheme: ${logRecord.schemeName}`);
+      }
+      if (logRecord.destination) {
+        hintLines.splice(hintLines.length - 1, 0, `  • Destination: ${logRecord.destination}`);
+      }
+      hintLines.push(`  • View: xcodecontrol view-build-log --log-id ${logRecord.id}`);
+      return applyLockMessaging(`${message}\n\n${hintLines.join('\n')}`);
+    };
+    const finalizeLogStatus = (status: 'active' | 'completed' | 'failed', buildStatus?: string | null) => {
+      const extras =
+        buildStatus === undefined
+          ? undefined
+          : {
+              buildStatus,
+            };
+      BuildLogStore.updateStatus(logRecord?.id, status, extras);
+    };
 
     // Normalize the scheme name for better matching
     const normalizedSchemeName = ParameterNormalizer.normalizeSchemeName(schemeName);
@@ -197,6 +236,30 @@ export class BuildTools {
       }
     }
 
+    const { footerText: buildLockFooter } = await LockManager.acquireLock(projectPath, reason, 'xcode_build');
+    lockFooterText = buildLockFooter;
+    let lockReleased = false;
+    const releaseLockNow = async (): Promise<void> => {
+      if (lockReleased) {
+        return;
+      }
+      try {
+        await LockManager.releaseLock(projectPath);
+      } catch (error) {
+        Logger.warn(
+          `Failed to release build lock for ${projectPath}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      } finally {
+        lockReleased = true;
+      }
+    };
+    const markAutoRelease = async (reasonText: string): Promise<void> => {
+      autoReleaseNote = reasonText;
+      await releaseLockNow();
+    };
+
     const buildScript = `
       (function() {
         ${getWorkspaceByPathScript(projectPath)}
@@ -217,10 +280,16 @@ export class BuildTools {
     } catch (error) {
       const enhancedError = ErrorHelper.parseCommonErrors(error as Error);
       if (enhancedError) {
-        return { content: [{ type: 'text', text: enhancedError }] };
+        await markAutoRelease('Failed to start the build in Xcode');
+        return {
+          content: [{ type: 'text', text: applyLockMessaging(enhancedError) }],
+        };
       }
       const errorMessage = error instanceof Error ? error.message : String(error);
-      return { content: [{ type: 'text', text: `Failed to start build: ${errorMessage}` }] };
+      await markAutoRelease('Failed to start the build in Xcode');
+      return {
+        content: [{ type: 'text', text: applyLockMessaging(`Failed to start build: ${errorMessage}`) }],
+      };
     }
 
     Logger.info('Waiting for new build log to appear after build start...');
@@ -251,7 +320,31 @@ export class BuildTools {
     }
 
     if (!newLog) {
-      return { content: [{ type: 'text', text: ErrorHelper.createErrorWithGuidance(`Build started but no new build log appeared within ${initialWaitAttempts} seconds`, ErrorHelper.getBuildLogNotFoundGuidance()) }] };
+      await markAutoRelease('Build log never appeared');
+      return {
+        content: [
+          {
+            type: 'text',
+            text: applyLockMessaging(
+              ErrorHelper.createErrorWithGuidance(
+                `Build started but no new build log appeared within ${initialWaitAttempts} seconds`,
+                ErrorHelper.getBuildLogNotFoundGuidance(),
+              ),
+            ),
+          },
+        ],
+      };
+    }
+
+    if (!logRecord) {
+      logRecord = BuildLogStore.registerLog({
+        projectPath,
+        logPath: newLog.path,
+        schemeName,
+        destination,
+        action: 'build',
+        logKind: 'build',
+      });
     }
 
     Logger.info(`Monitoring build completion for log: ${newLog.path}`);
@@ -299,7 +392,11 @@ export class BuildTools {
     }
 
     if (attempts >= maxAttempts) {
-      return { content: [{ type: 'text', text: `Build timed out after ${maxAttempts} seconds` }] };
+      finalizeLogStatus('failed', 'timeout');
+      await markAutoRelease('Build timed out');
+      return {
+        content: [{ type: 'text', text: attachLogHint(`Build timed out after ${maxAttempts} seconds`) }],
+      };
     }
     
     const results = await BuildLogParser.parseBuildLog(newLog.path, 0, 6, { timeoutMs: 45000 });
@@ -330,7 +427,9 @@ export class BuildTools {
     // Handle stopped/interrupted builds
     if (results.buildStatus === 'stopped') {
       message = `⏹️ BUILD INTERRUPTED${schemeInfo}${destInfo}\n\nThe build was stopped or interrupted before completion.\n\n💡 This may happen when:\n  • The build was cancelled manually\n  • Xcode was closed during the build\n  • System resources were exhausted\n\nTry running the build again to complete it.`;
-      return { content: [{ type: 'text', text: message }] };
+      finalizeLogStatus('failed', results.buildStatus);
+      await markAutoRelease('Build was interrupted');
+      return { content: [{ type: 'text', text: attachLogHint(message) }] };
     }
     
     if (results.errors.length > 0) {
@@ -339,9 +438,11 @@ export class BuildTools {
         message += `  • ${error}\n`;
         Logger.error('Build error:', error);
       });
+      finalizeLogStatus('failed', results.buildStatus ?? 'failed');
+      await markAutoRelease('Build failed with errors');
       throw new McpError(
         ErrorCode.InternalError,
-        message
+        attachLogHint(message)
       );
     } else if (results.warnings.length > 0) {
       message = `⚠️ BUILD COMPLETED WITH WARNINGS${schemeInfo}${destInfo} (${results.warnings.length} warnings)\n\nWARNINGS:\n`;
@@ -353,7 +454,8 @@ export class BuildTools {
       message = `✅ BUILD SUCCESSFUL${schemeInfo}${destInfo}`;
     }
 
-    return { content: [{ type: 'text', text: message }] };
+    finalizeLogStatus('completed', results.buildStatus ?? null);
+    return { content: [{ type: 'text', text: attachLogHint(message) }] };
   }
 
   public static async clean(projectPath: string, openProject: OpenProjectCallback): Promise<McpResult> {
@@ -817,15 +919,64 @@ export class BuildTools {
   }
 
   public static async run(
-    projectPath: string, 
+    projectPath: string,
     schemeName: string,
-    commandLineArguments: string[] = [], 
+    reason: string,
+    commandLineArguments: string[] = [],
     openProject: OpenProjectCallback
   ): Promise<McpResult> {
     const validationError = PathValidator.validateProjectPath(projectPath);
     if (validationError) return validationError;
 
     await openProject(projectPath);
+
+    let logRecord: BuildLogRecord | null = null;
+    let runLogRecord: BuildLogRecord | null = null;
+    let lockFooterText: string | null = null;
+    let autoReleaseNote: string | null = null;
+    const applyLockFooter = (message: string): string => {
+      if (autoReleaseNote) {
+        const note = `🔓 Lock automatically released: ${autoReleaseNote}\nNo manual release command is required for this attempt.`;
+        return `${message}\n\n${note}`;
+      }
+      return LockManager.appendFooter(message, lockFooterText);
+    };
+    const attachLogHint = (message: string): string => {
+      if (!logRecord) return applyLockFooter(message);
+      const hintLines = [
+        '🪵 Build Log Metadata',
+        `  • Log ID: ${logRecord.id}`,
+        `  • Path: ${logRecord.logPath}`,
+      ];
+      if (logRecord.schemeName) {
+        hintLines.splice(1, 0, `  • Scheme: ${logRecord.schemeName}`);
+      }
+      hintLines.push(`  • View: xcodecontrol view-build-log --log-id ${logRecord.id}`);
+      return applyLockFooter(`${message}\n\n${hintLines.join('\n')}`);
+    };
+    const attachRunLogHint = (message: string): string => {
+      if (!runLogRecord) return applyLockFooter(message);
+      const hintLines = [
+        '🪵 Run Log Metadata',
+        `  • Log ID: ${runLogRecord.id}`,
+        `  • Path: ${runLogRecord.logPath}`,
+        `  • View: xcodecontrol view-run-log --log-id ${runLogRecord.id}`,
+      ];
+      if (runLogRecord.schemeName) {
+        hintLines.splice(1, 0, `  • Scheme: ${runLogRecord.schemeName}`);
+      }
+      return applyLockFooter(`${message}\n\n${hintLines.join('\n')}`);
+    };
+    const attachAllHints = (message: string): string => attachRunLogHint(attachLogHint(message));
+    const finalizeLogStatus = (status: 'active' | 'completed' | 'failed', buildStatus?: string | null) => {
+      const extras =
+        buildStatus === undefined
+          ? undefined
+          : {
+              buildStatus,
+            };
+      BuildLogStore.updateStatus(logRecord?.id, status, extras);
+    };
 
     // Set the scheme
     const normalizedSchemeName = ParameterNormalizer.normalizeSchemeName(schemeName);
@@ -890,6 +1041,29 @@ export class BuildTools {
     }
 
     // Note: No longer need to track initial log since we use AppleScript completion detection
+    const { footerText: runLockFooter } = await LockManager.acquireLock(projectPath, reason, 'xcode_build_and_run');
+    lockFooterText = runLockFooter;
+    let runLockReleased = false;
+    const releaseRunLock = async (): Promise<void> => {
+      if (runLockReleased) {
+        return;
+      }
+      try {
+        await LockManager.releaseLock(projectPath);
+      } catch (error) {
+        Logger.warn(
+          `Failed to release run lock for ${projectPath}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      } finally {
+        runLockReleased = true;
+      }
+    };
+    const markRunAutoRelease = async (reasonText: string): Promise<void> => {
+      autoReleaseNote = reasonText;
+      await releaseRunLock();
+    };
 
     const hasArgs = commandLineArguments && commandLineArguments.length > 0;
     const script = `
@@ -911,7 +1085,15 @@ export class BuildTools {
     const actionId = actionIdMatch ? actionIdMatch[1] : null;
     
     if (!actionId) {
-      return { content: [{ type: 'text', text: `${runResult}\n\nError: Could not extract action ID from run result` }] };
+      await markRunAutoRelease('Failed to read the run identifier from Xcode');
+      return {
+        content: [
+          {
+            type: 'text',
+            text: applyLockFooter(`${runResult}\n\nError: Could not extract action ID from run result`),
+          },
+        ],
+      };
     }
     
     Logger.info(`Run started with action ID: ${actionId}`);
@@ -1038,9 +1220,9 @@ export class BuildTools {
           content: [
             {
               type: 'text',
-              text: `${runResult}\n\n⏳ Run is still in progress after approximately ${
+              text: attachRunLogHint(`${runResult}\n\n⏳ Run is still in progress after approximately ${
               Math.round((Date.now() - runStartTime) / 1000)
-              } seconds (last known status: ${lastStatus ?? 'unknown'}, completed=${lastCompleted ?? 'n/a'}).\n\nThe app should keep launching in Xcode/Simulator. Check Xcode's report navigator for the final build status or rerun this command once the launch completes.`,
+              } seconds (last known status: ${lastStatus ?? 'unknown'}, completed=${lastCompleted ?? 'n/a'}).\n\nThe app should keep launching in Xcode/Simulator. Check Xcode's report navigator for the final build status or rerun this command once the launch completes.`),
             },
           ],
         };
@@ -1073,13 +1255,37 @@ export class BuildTools {
           content: [
             {
               type: 'text',
-              text: `${runResult}\n\nNote: Run completed but no build log was found (app may have launched without building).`,
+              text: attachRunLogHint(`${runResult}\n\nNote: Run completed but no build log was found (app may have launched without building).`),
             },
           ],
         };
       }
     }
     
+    if (!logRecord) {
+      logRecord = BuildLogStore.registerLog({
+        projectPath,
+        logPath: newLog.path,
+        schemeName,
+        action: 'run',
+        logKind: 'build',
+      });
+    }
+
+    const runConsoleLog = await BuildLogParser.getLatestRunLog(projectPath, runStartTime);
+    if (runConsoleLog) {
+      runLogRecord = BuildLogStore.registerLog({
+        projectPath,
+        logPath: runConsoleLog.path,
+        schemeName,
+        action: 'run',
+        logKind: 'run',
+      });
+      BuildLogStore.updateStatus(runLogRecord.id, 'completed', { buildStatus: null });
+    } else {
+      Logger.warn('Unable to locate run console log for this session.');
+    }
+
     Logger.info(`Run completed, parsing build log: ${newLog.path}`);
 
     const parseStart = Date.now();
@@ -1147,7 +1353,8 @@ export class BuildTools {
         }
         message += `You can open the log manually in Xcode:\n  • ${newLog.path}`;
       }
-      return { content: [{ type: 'text', text: message }] };
+      finalizeLogStatus('completed', null);
+      return { content: [{ type: 'text', text: attachAllHints(message) }] };
     }
 
     Logger.info(
@@ -1175,7 +1382,9 @@ export class BuildTools {
     // Handle stopped/interrupted builds
     if (results.buildStatus === 'stopped') {
       message += `⏹️ BUILD INTERRUPTED\n\nThe build was stopped or interrupted before completion.\n\n💡 This may happen when:\n  • The build was cancelled manually\n  • Xcode was closed during the build\n  • System resources were exhausted\n\nTry running the build again to complete it.`;
-      return { content: [{ type: 'text', text: message }] };
+      finalizeLogStatus('failed', results.buildStatus);
+      await markRunAutoRelease('Run was interrupted');
+      return { content: [{ type: 'text', text: attachLogHint(message) }] };
     }
     
     if (results.errors.length > 0) {
@@ -1183,9 +1392,11 @@ export class BuildTools {
       results.errors.forEach(error => {
         message += `  • ${error}\n`;
       });
+      finalizeLogStatus('failed', results.buildStatus ?? 'failed');
+      await markRunAutoRelease('Run build failed with errors');
       throw new McpError(
         ErrorCode.InternalError,
-        message
+        attachAllHints(message)
       );
     } else if (results.warnings.length > 0) {
       message += `⚠️ BUILD COMPLETED WITH WARNINGS (${results.warnings.length} warnings)\n\nWARNINGS:\n`;
@@ -1196,7 +1407,8 @@ export class BuildTools {
       message += '✅ BUILD SUCCESSFUL - App should be launching';
     }
 
-    return { content: [{ type: 'text', text: message }] };
+    finalizeLogStatus('completed', results.buildStatus ?? null);
+    return { content: [{ type: 'text', text: attachAllHints(message) }] };
   }
 
   public static async debug(

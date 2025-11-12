@@ -98,6 +98,7 @@ describeIfXcode('MCP Tool Handlers', () => {
       expect(toolNames).toContain('xcode_build');
       expect(toolNames).toContain('xcode_test');
       expect(toolNames).toContain('xcode_build_and_run');
+      expect(toolNames).toContain('xcode_release_lock');
     });
 
     test('should include proper tool schemas', async () => {
@@ -109,7 +110,7 @@ describeIfXcode('MCP Tool Handlers', () => {
       expect(buildTool.inputSchema).toHaveProperty('properties');
       expect(buildTool.inputSchema.properties).toHaveProperty('xcodeproj');
       expect(buildTool.inputSchema.properties).toHaveProperty('scheme');
-      expect(buildTool.inputSchema.required).toEqual(expect.arrayContaining(['xcodeproj', 'scheme']));
+      expect(buildTool.inputSchema.required).toEqual(expect.arrayContaining(['reason', 'xcodeproj', 'scheme']));
     });
 
     test('should include optional parameter tools', async () => {

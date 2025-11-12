@@ -39,8 +39,13 @@ export function getToolDefinitions(options: {
             type: 'string',
             description: 'Build destination (optional - uses active destination if not provided)',
           },
+          reason: {
+            type: 'string',
+            description: 'One-line reason for holding the build lock (e.g., "Working on onboarding flow").',
+          },
         },
         required: [
+          'reason',
           ...(!preferredXcodeproj ? ['xcodeproj'] : []),
           ...(!preferredScheme ? ['scheme'] : [])
         ],
@@ -169,11 +174,33 @@ export function getToolDefinitions(options: {
             items: { type: 'string' },
             description: 'Additional command line arguments',
           },
+          reason: {
+            type: 'string',
+            description: 'One-line reason for holding the build & run lock (helps other workers coordinate).',
+          },
         },
         required: [
+          'reason',
           ...(!preferredXcodeproj ? ['xcodeproj'] : []),
           ...(!preferredScheme ? ['scheme'] : [])
         ],
+      },
+    },
+    {
+      name: 'xcode_release_lock',
+      cliName: 'release-lock',
+      description: 'Release the exclusive build/run lock for a project or workspace once you are finished inspecting the results.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          xcodeproj: {
+            type: 'string',
+            description: preferredXcodeproj
+              ? `Absolute path to the .xcodeproj or .xcworkspace whose lock you want to release - defaults to ${preferredXcodeproj}`
+              : 'Absolute path to the .xcodeproj or .xcworkspace whose lock you want to release.',
+          },
+        },
+        required: preferredXcodeproj ? [] : ['xcodeproj'],
       },
     },
     {
@@ -193,7 +220,7 @@ export function getToolDefinitions(options: {
       },
     },
     {
-      name: 'find_xcresults',
+      name: 'xcode_find_xcresults',
       description: 'Find all XCResult files for a specific project with timestamps and file information',
       inputSchema: {
         type: 'object',
@@ -275,7 +302,97 @@ export function getToolDefinitions(options: {
       },
     },
     {
-      name: 'list_sims',
+      name: 'xcode_view_build_log',
+      cliName: 'view-build-log',
+      cliAliases: ['get-build-log'],
+      description:
+        'Display the build/run log captured for a project. Supply a log_id returned by build/run commands or a project path to view the latest log.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          log_id: {
+            type: 'string',
+            description: 'Log ID returned by xcode_build/xcode_build_and_run when the log was registered.',
+          },
+          xcodeproj: {
+            type: 'string',
+            description: 'Absolute path to the project/workspace. Used to locate the most recent log when log_id is not provided.',
+          },
+          filter: {
+            type: 'string',
+            description: 'Optional filter string. Matches are case-insensitive unless case_sensitive=true.',
+          },
+          filter_regex: {
+            type: 'boolean',
+            description: 'Treat filter as a JavaScript regex pattern.',
+          },
+          case_sensitive: {
+            type: 'boolean',
+            description: 'Make the filter match case-sensitive (default false).',
+          },
+          max_lines: {
+            type: 'number',
+            description: 'Maximum number of log lines to return (default 400).',
+          },
+          filter_globs: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Optional glob patterns (e.g., "*error*", "??-warning") to match multiple expressions. Separate with commas when using the CLI.',
+          },
+          cursor: {
+            type: 'string',
+            description: 'Cursor returned by a previous call. When supplied, only shows new log output written since that cursor.',
+          },
+        },
+      },
+    },
+    {
+      name: 'xcode_view_run_log',
+      cliName: 'view-run-log',
+      cliAliases: ['get-run-log'],
+      description:
+        'Display the runtime console log captured for the most recent run. Supply a log_id returned by build-and-run or use a project path to view the latest log.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          log_id: {
+            type: 'string',
+            description: 'Log ID returned by xcode_build_and_run when the run log was registered.',
+          },
+          xcodeproj: {
+            type: 'string',
+            description: 'Absolute path to the project/workspace. Used to locate the most recent run log when log_id is not provided.',
+          },
+          filter: {
+            type: 'string',
+            description: 'Optional filter string. Matches are case-insensitive unless case_sensitive=true.',
+          },
+          filter_regex: {
+            type: 'boolean',
+            description: 'Treat filter as a JavaScript regex pattern.',
+          },
+          filter_globs: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Optional glob patterns (e.g., "*error*", "??-warning") to match multiple expressions. Separate with commas when using the CLI.',
+          },
+          case_sensitive: {
+            type: 'boolean',
+            description: 'Make the filter match case-sensitive (default false).',
+          },
+          max_lines: {
+            type: 'number',
+            description: 'Maximum number of log lines to return (default 400).',
+          },
+          cursor: {
+            type: 'string',
+            description: 'Cursor returned by a previous call. When supplied, only shows new log output written since that cursor.',
+          },
+        },
+      },
+    },
+    {
+      name: 'xcode_list_sims',
       description: 'List available iOS simulators with their states and runtime information.',
       inputSchema: {
         type: 'object',
@@ -283,7 +400,7 @@ export function getToolDefinitions(options: {
       },
     },
     {
-      name: 'boot_sim',
+      name: 'xcode_boot_sim',
       description: 'Boot an iOS simulator using its UUID.',
       inputSchema: {
         type: 'object',
@@ -297,7 +414,7 @@ export function getToolDefinitions(options: {
       },
     },
     {
-      name: 'open_sim',
+      name: 'xcode_open_sim',
       description: 'Open the Simulator application.',
       inputSchema: {
         type: 'object',
@@ -305,7 +422,7 @@ export function getToolDefinitions(options: {
       },
     },
     {
-      name: 'shutdown_sim',
+      name: 'xcode_shutdown_sim',
       description: 'Shut down a running simulator.',
       inputSchema: {
         type: 'object',
@@ -319,7 +436,7 @@ export function getToolDefinitions(options: {
       },
     },
     {
-      name: 'screenshot',
+      name: 'xcode_screenshot',
       description: 'Capture a PNG screenshot from a simulator. Returns the image as base64 data.',
       inputSchema: {
         type: 'object',
@@ -336,49 +453,7 @@ export function getToolDefinitions(options: {
       },
     },
     {
-      name: 'start_sim_log_cap',
-      description:
-        'Start capturing logs from a simulator. Returns a session ID for stop_sim_log_cap. Optional console capture relaunches the app.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          simulator_uuid: {
-            type: 'string',
-            description: 'UUID of the simulator to capture.',
-          },
-          bundle_id: {
-            type: 'string',
-            description: 'Bundle identifier of the target app (e.g., com.example.MyApp).',
-          },
-          capture_console: {
-            type: 'boolean',
-            description: 'Capture console output by relaunching the app (defaults to false).',
-          },
-          command_line_arguments: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'Arguments forwarded when relaunching the app for console capture.',
-          },
-        },
-        required: ['simulator_uuid', 'bundle_id'],
-      },
-    },
-    {
-      name: 'stop_sim_log_cap',
-      description: 'Stop log capture started by start_sim_log_cap and return collected output.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          session_id: {
-            type: 'string',
-            description: 'Session ID returned by start_sim_log_cap.',
-          },
-        },
-        required: ['session_id'],
-      },
-    },
-    {
-      name: 'describe_ui',
+      name: 'xcode_describe_ui',
       description:
         'Return the accessibility hierarchy for the running simulator using AXe. Provides coordinates for automation.',
       inputSchema: {
@@ -393,7 +468,7 @@ export function getToolDefinitions(options: {
       },
     },
     {
-      name: 'tap',
+      name: 'xcode_tap',
       description:
         'Tap at specific coordinates using AXe. Use describe_ui first to gather accurate positions.',
       inputSchema: {
@@ -424,7 +499,7 @@ export function getToolDefinitions(options: {
       },
     },
     {
-      name: 'type_text',
+      name: 'xcode_type_text',
       description: 'Type text into the simulator using AXe keyboard events. Focus the target field first.',
       inputSchema: {
         type: 'object',
@@ -442,7 +517,7 @@ export function getToolDefinitions(options: {
       },
     },
     {
-      name: 'swipe',
+      name: 'xcode_swipe',
       description:
         'Swipe from one coordinate to another using AXe. Coordinates are provided in simulator points.',
       inputSchema: {
@@ -497,7 +572,7 @@ export function getToolDefinitions(options: {
       },
     },
     {
-      name: 'xcresult_browse',
+      name: 'xcode_xcresult_browse',
       description: 'Browse XCResult files - list all tests or show details for a specific test. Returns comprehensive test results including pass/fail status, failure details, and browsing instructions. Large console output (>20 lines or >2KB) is automatically saved to a temporary file.',
       inputSchema: {
         type: 'object',
@@ -520,7 +595,7 @@ export function getToolDefinitions(options: {
       },
     },
     {
-      name: 'xcresult_browser_get_console',
+      name: 'xcode_xcresult_browser_get_console',
       description: 'Get console output and test activities for a specific test in an XCResult file. Large output (>20 lines or >2KB) is automatically saved to a temporary file.',
       inputSchema: {
         type: 'object',
@@ -538,7 +613,7 @@ export function getToolDefinitions(options: {
       },
     },
     {
-      name: 'xcresult_summary',
+      name: 'xcode_xcresult_summary',
       description: 'Get a quick summary of test results from an XCResult file',
       inputSchema: {
         type: 'object',
@@ -552,7 +627,7 @@ export function getToolDefinitions(options: {
       },
     },
     {
-      name: 'xcresult_get_screenshot',
+      name: 'xcode_xcresult_get_screenshot',
       description: 'Get screenshot from a failed test at specific timestamp - extracts frame from video attachment using ffmpeg',
       inputSchema: {
         type: 'object',
@@ -574,7 +649,7 @@ export function getToolDefinitions(options: {
       },
     },
     {
-      name: 'xcresult_get_ui_hierarchy',
+      name: 'xcode_xcresult_get_ui_hierarchy',
       description: 'Get UI hierarchy attachment from test. Returns raw accessibility tree (best for AI), slim AI-readable JSON (default), or full JSON.',
       inputSchema: {
         type: 'object',
@@ -604,7 +679,7 @@ export function getToolDefinitions(options: {
       },
     },
     {
-      name: 'xcresult_get_ui_element',
+      name: 'xcode_xcresult_get_ui_element',
       description: 'Get full details of a specific UI element by index from a previously exported UI hierarchy JSON file',
       inputSchema: {
         type: 'object',
@@ -626,7 +701,7 @@ export function getToolDefinitions(options: {
       },
     },
     {
-      name: 'xcresult_list_attachments',
+      name: 'xcode_xcresult_list_attachments',
       description: 'List all attachments for a specific test - shows attachment names, types, and indices for export',
       inputSchema: {
         type: 'object',
@@ -644,7 +719,7 @@ export function getToolDefinitions(options: {
       },
     },
     {
-      name: 'xcresult_export_attachment',
+      name: 'xcode_xcresult_export_attachment',
       description: 'Export a specific attachment by index - can convert App UI hierarchy attachments to JSON',
       inputSchema: {
         type: 'object',

@@ -91,15 +91,15 @@ describe('XcodeMCPServer Basic Tests', () => {
       'xcode_get_projects',
       'xcode_open_file',
       'xcode_health_check',
-      'find_xcresults',
-      'xcresult_browse',
-      'xcresult_browser_get_console',
-      'xcresult_summary',
-      'xcresult_get_screenshot',
-      'xcresult_get_ui_hierarchy',
-      'xcresult_get_ui_element',
-      'xcresult_list_attachments',
-      'xcresult_export_attachment'
+      'xcode_find_xcresults',
+      'xcode_xcresult_browse',
+      'xcode_xcresult_browser_get_console',
+      'xcode_xcresult_summary',
+      'xcode_xcresult_get_screenshot',
+      'xcode_xcresult_get_ui_hierarchy',
+      'xcode_xcresult_get_ui_element',
+      'xcode_xcresult_list_attachments',
+      'xcode_xcresult_export_attachment'
     ];
     
     // Verify the server was created and has the expected MCP server instance

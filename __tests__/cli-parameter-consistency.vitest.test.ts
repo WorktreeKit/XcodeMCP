@@ -28,7 +28,11 @@ describe('CLI Parameter Consistency', () => {
         expectedError: 'Project file does not exist', // Project not found, but parameters accepted
       },
       {
-        command: 'build-and-run --xcodeproj /fake/project.xcodeproj --scheme TestScheme --command-line-arguments arg1',
+        command: 'build --xcodeproj /fake/project.xcodeproj --scheme TestScheme --reason "Testing CLI locks"',
+        expectedError: 'Project file does not exist',
+      },
+      {
+        command: 'build-and-run --xcodeproj /fake/project.xcodeproj --scheme TestScheme --reason "Testing CLI locks" --command-line-arguments arg1',
         expectedError: 'Project file does not exist', // Project not found, but parameters accepted
       },
     ];
@@ -75,7 +79,8 @@ describe('CLI Parameter Consistency', () => {
       { command: 'open-file --help', expected: ['--file-path', '--line-number'] },
       { command: 'set-active-scheme --help', expected: ['--scheme-name'] },
       { command: 'test --help', expected: ['--command-line-arguments'] },
-      { command: 'build-and-run --help', expected: ['--command-line-arguments'] },
+      { command: 'build --help', expected: ['--reason'] },
+      { command: 'build-and-run --help', expected: ['--reason', '--command-line-arguments'] },
       { command: 'xcresult-get-ui-element --help', expected: ['--hierarchy-json-path', '--element-index'] },
       { command: 'xcresult-export-attachment --help', expected: ['--attachment-index'] },
     ];
@@ -106,7 +111,7 @@ describe('CLI Parameter Consistency', () => {
     });
     
     expect(result1.stdout).toContain('xcresult-get-ui-hierarchy');
-    expect(result1.stdout).not.toContain('xcresult_get_ui_hierarchy');
+    expect(result1.stdout).not.toContain('xcode_xcresult_get_ui_hierarchy');
 
     const result2 = await execAsync(`${CLI_BIN} xcresult-export-attachment --help`, {
       cwd: PROJECT_ROOT,
@@ -114,7 +119,7 @@ describe('CLI Parameter Consistency', () => {
     });
     
     expect(result2.stdout).toContain('xcresult-list-attachments');
-    expect(result2.stdout).not.toContain('xcresult_list_attachments');
+    expect(result2.stdout).not.toContain('xcode_xcresult_list_attachments');
 
     // Test find-xcresults usage instructions with a real project
     const result3 = await execAsync(`${CLI_BIN} find-xcresults --xcodeproj __tests__/TestApp/TestApp.xcodeproj`, {
@@ -131,8 +136,8 @@ describe('CLI Parameter Consistency', () => {
     // If there are usage instructions, verify they use kebab-case
     if (hasUsageInstructions) {
       expect(result3.stdout).toContain('xcresult-browser-get-console --xcresult-path');
-      expect(result3.stdout).not.toContain('xcresult_browse');
-      expect(result3.stdout).not.toContain('xcresult_browser_get_console');
+      expect(result3.stdout).not.toContain('xcode_xcresult_browse');
+      expect(result3.stdout).not.toContain('xcode_xcresult_browser_get_console');
     }
   }, 30000);
 });

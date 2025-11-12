@@ -16,11 +16,13 @@ import ProjectTools from './tools/ProjectTools.js';
 import InfoTools from './tools/InfoTools.js';
 import XCResultTools from './tools/XCResultTools.js';
 import SimulatorTools from './tools/SimulatorTools.js';
-import SimulatorLogTools from './tools/SimulatorLogTools.js';
 import SimulatorUiTools from './tools/SimulatorUiTools.js';
+import LogTools from './tools/LogTools.js';
+import LockTools from './tools/LockTools.js';
 import PathValidator from './utils/PathValidator.js';
 import { EnvironmentValidator } from './utils/EnvironmentValidator.js';
 import Logger from './utils/Logger.js';
+import LockManager from './utils/LockManager.js';
 import type {
   EnvironmentValidation,
   ToolLimitations,
@@ -233,21 +235,19 @@ export class XcodeServer {
 
     const buildTools = ['xcode_build', 'xcode_test', 'xcode_build_and_run', 'xcode_clean'];
     const xcodeTools = [...buildTools, 'xcode_get_schemes', 'xcode_set_active_scheme', 
-                       'xcode_get_run_destinations', 'xcode_get_workspace_info', 'xcode_get_projects'];
+                       'xcode_get_run_destinations', 'xcode_get_workspace_info', 'xcode_get_projects', 'xcode_view_build_log', 'xcode_view_run_log'];
     const simulatorTools = [
-      'list_sims',
-      'boot_sim',
-      'shutdown_sim',
-      'open_sim',
-      'screenshot',
-      'start_sim_log_cap',
-      'stop_sim_log_cap',
-      'describe_ui',
-      'tap',
-      'type_text',
-      'swipe',
+      'xcode_list_sims',
+      'xcode_boot_sim',
+      'xcode_shutdown_sim',
+      'xcode_open_sim',
+      'xcode_screenshot',
+      'xcode_describe_ui',
+      'xcode_tap',
+      'xcode_type_text',
+      'xcode_swipe',
     ];
-    const xcresultTools = ['xcresult_browse', 'xcresult_browser_get_console', 'xcresult_summary', 'xcresult_get_screenshot', 'xcresult_get_ui_hierarchy', 'xcresult_get_ui_element', 'xcresult_list_attachments', 'xcresult_export_attachment'];
+    const xcresultTools = ['xcode_xcresult_browse', 'xcode_xcresult_browser_get_console', 'xcode_xcresult_summary', 'xcode_xcresult_get_screenshot', 'xcode_xcresult_get_ui_hierarchy', 'xcode_xcresult_get_ui_element', 'xcode_xcresult_list_attachments', 'xcode_xcresult_export_attachment'];
 
     if (simulatorTools.includes(toolName) && !validation.xcode?.valid) {
       return {
@@ -452,12 +452,16 @@ export class XcodeServer {
             if (!args.scheme) {
               throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: scheme`);
             }
-            return await BuildTools.build(
-              args.xcodeproj as string, 
-              args.scheme as string, 
-              (args.destination as string) || null, 
-              this.openProject.bind(this)
-            );
+            {
+              const reason = this.normalizeLockReason(args.reason, 'xcode_build');
+              return await BuildTools.build(
+                args.xcodeproj as string,
+                args.scheme as string,
+                reason,
+                (args.destination as string) || null,
+                this.openProject.bind(this),
+              );
+            }
           case 'xcode_clean':
             if (!this.includeClean) {
               throw new McpError(ErrorCode.MethodNotFound, `Clean tool is disabled`);
@@ -478,18 +482,27 @@ export class XcodeServer {
             if (!args.scheme) {
               throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: scheme`);
             }
-            return await BuildTools.run(
-              args.xcodeproj as string, 
-              args.scheme as string,
-              (args.command_line_arguments as string[]) || [], 
-              this.openProject.bind(this)
-            );
+            {
+              const reason = this.normalizeLockReason(args.reason, 'xcode_build_and_run');
+              return await BuildTools.run(
+                args.xcodeproj as string,
+                args.scheme as string,
+                reason,
+                (args.command_line_arguments as string[]) || [],
+                this.openProject.bind(this),
+              );
+            }
+          case 'xcode_release_lock':
+            if (!args.xcodeproj) {
+              throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
+            }
+            return await LockTools.release(args.xcodeproj as string);
           case 'xcode_stop':
             if (!args.xcodeproj) {
               return { content: [{ type: 'text', text: 'Error: xcodeproj parameter is required' }] };
             }
             return await BuildTools.stop(args.xcodeproj as string);
-          case 'find_xcresults':
+          case 'xcode_find_xcresults':
             if (!args.xcodeproj) {
               throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
             }
@@ -531,9 +544,78 @@ export class XcodeServer {
               throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: file_path`);
             }
             return await InfoTools.openFile(args.file_path as string, args.line_number as number);
-          case 'list_sims':
+          case 'xcode_view_build_log': {
+            const parseBoolean = (value: unknown): boolean => {
+              if (typeof value === 'boolean') return value;
+              if (typeof value === 'string') {
+                return value.toLowerCase() === 'true';
+              }
+              return false;
+            };
+            const rawMaxLines =
+              typeof args.max_lines === 'number'
+                ? args.max_lines
+                : typeof args.max_lines === 'string'
+                  ? Number.parseInt(args.max_lines, 10)
+                  : undefined;
+            const normalizedMaxLines =
+              typeof rawMaxLines === 'number' && Number.isFinite(rawMaxLines) && rawMaxLines > 0
+                ? rawMaxLines
+                : undefined;
+            const logArgs: {
+              log_id?: string;
+              xcodeproj?: string;
+              filter_regex: boolean;
+              case_sensitive: boolean;
+              filter?: string;
+              max_lines?: number;
+              filter_globs?: string[];
+              cursor?: string;
+            } = {
+              filter_regex: parseBoolean(args.filter_regex),
+              case_sensitive: parseBoolean(args.case_sensitive),
+            };
+            const logId = (args.log_id as string) ?? (args.logId as string) ?? undefined;
+            if (logId) {
+              logArgs.log_id = logId;
+            }
+            const projectPath = (args.xcodeproj as string) ?? undefined;
+            if (projectPath) {
+              logArgs.xcodeproj = projectPath;
+            }
+            const filterGlobsArg =
+              (args.filter_globs as string[] | string | undefined) ??
+              (args.filterGlobs as string[] | string | undefined);
+            if (filterGlobsArg) {
+              if (Array.isArray(filterGlobsArg)) {
+                const sanitized = filterGlobsArg
+                  .map(item => (typeof item === 'string' ? item.trim() : ''))
+                  .filter(item => item.length > 0);
+                if (sanitized.length > 0) {
+                  logArgs.filter_globs = sanitized;
+                }
+              } else if (typeof filterGlobsArg === 'string' && filterGlobsArg.trim().length > 0) {
+                logArgs.filter_globs = filterGlobsArg
+                  .split(',')
+                  .map(item => item.trim())
+                  .filter(item => item.length > 0);
+              }
+            }
+            const cursorArg = (args.cursor as string) ?? undefined;
+            if (cursorArg) {
+              logArgs.cursor = cursorArg;
+            }
+            if (typeof args.filter === 'string' && args.filter.length > 0) {
+              logArgs.filter = args.filter;
+            }
+            if (normalizedMaxLines !== undefined) {
+              logArgs.max_lines = normalizedMaxLines;
+            }
+            return await LogTools.getBuildLog(logArgs);
+          }
+          case 'xcode_list_sims':
             return await SimulatorTools.listSimulators();
-          case 'boot_sim': {
+          case 'xcode_boot_sim': {
             const simulatorUuid =
               (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
               (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
@@ -542,9 +624,9 @@ export class XcodeServer {
             }
             return await SimulatorTools.bootSimulator(simulatorUuid);
           }
-          case 'open_sim':
+          case 'xcode_open_sim':
             return await SimulatorTools.openSimulator();
-          case 'shutdown_sim': {
+          case 'xcode_shutdown_sim': {
             const simulatorUuid =
               (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
               (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
@@ -553,7 +635,7 @@ export class XcodeServer {
             }
             return await SimulatorTools.shutdownSimulator(simulatorUuid);
           }
-          case 'screenshot': {
+          case 'xcode_screenshot': {
             const simulatorUuid =
               (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
               (typeof args.simulatorUuid === 'string' && args.simulatorUuid) ||
@@ -561,45 +643,7 @@ export class XcodeServer {
             const savePath = typeof args.save_path === 'string' ? args.save_path : undefined;
             return await SimulatorTools.captureScreenshot(simulatorUuid, savePath);
           }
-          case 'start_sim_log_cap': {
-            const simulatorUuid =
-              (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
-              (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
-            if (!simulatorUuid) {
-              throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: simulator_uuid`);
-            }
-            const bundleId =
-              (typeof args.bundle_id === 'string' && args.bundle_id) ||
-              (typeof args.bundleId === 'string' && args.bundleId);
-            if (!bundleId) {
-              throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: bundle_id`);
-            }
-            const captureConsole =
-              typeof args.capture_console === 'boolean'
-                ? args.capture_console
-                : typeof args.capture_console === 'string'
-                  ? args.capture_console.toLowerCase() === 'true'
-                  : false;
-            const extraArgs = Array.isArray(args.command_line_arguments)
-              ? (args.command_line_arguments as unknown[]).filter((item): item is string => typeof item === 'string')
-              : [];
-            return await SimulatorLogTools.startLogCapture({
-              simulatorUuid,
-              bundleId,
-              captureConsole,
-              args: extraArgs,
-            });
-          }
-          case 'stop_sim_log_cap': {
-            const sessionId =
-              (typeof args.session_id === 'string' && args.session_id) ||
-              (typeof args.sessionId === 'string' && args.sessionId);
-            if (!sessionId) {
-              throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: session_id`);
-            }
-            return await SimulatorLogTools.stopLogCapture(sessionId);
-          }
-          case 'describe_ui': {
+          case 'xcode_describe_ui': {
             const simulatorUuid =
               (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
               (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
@@ -608,7 +652,7 @@ export class XcodeServer {
             }
             return await SimulatorUiTools.describeUI(simulatorUuid);
           }
-          case 'tap': {
+          case 'xcode_tap': {
             const simulatorUuid =
               (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
               (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
@@ -624,7 +668,7 @@ export class XcodeServer {
             if (postDelay !== undefined) tapOptions.postDelay = postDelay;
             return await SimulatorUiTools.tap(simulatorUuid, x, y, tapOptions);
           }
-          case 'type_text': {
+          case 'xcode_type_text': {
             const simulatorUuid =
               (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
               (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
@@ -636,7 +680,7 @@ export class XcodeServer {
             }
             return await SimulatorUiTools.typeText(simulatorUuid, args.text);
           }
-          case 'swipe': {
+          case 'xcode_swipe': {
             const simulatorUuid =
               (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
               (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
@@ -663,7 +707,7 @@ export class XcodeServer {
               swipeOptions,
             );
           }
-          case 'xcresult_browse':
+          case 'xcode_xcresult_browse':
             if (!args.xcresult_path) {
               throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcresult_path`);
             }
@@ -672,7 +716,7 @@ export class XcodeServer {
               args.test_id as string | undefined,
               args.include_console as boolean || false
             );
-          case 'xcresult_browser_get_console':
+          case 'xcode_xcresult_browser_get_console':
             if (!args.xcresult_path) {
               throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcresult_path`);
             }
@@ -683,12 +727,12 @@ export class XcodeServer {
               args.xcresult_path as string,
               args.test_id as string
             );
-          case 'xcresult_summary':
+          case 'xcode_xcresult_summary':
             if (!args.xcresult_path) {
               throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcresult_path`);
             }
             return await XCResultTools.xcresultSummary(args.xcresult_path as string);
-          case 'xcresult_get_screenshot':
+          case 'xcode_xcresult_get_screenshot':
             if (!args.xcresult_path) {
               throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcresult_path`);
             }
@@ -703,7 +747,7 @@ export class XcodeServer {
               args.test_id as string,
               args.timestamp as number
             );
-          case 'xcresult_get_ui_hierarchy':
+          case 'xcode_xcresult_get_ui_hierarchy':
             if (!args.xcresult_path) {
               throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcresult_path`);
             }
@@ -717,7 +761,7 @@ export class XcodeServer {
               args.full_hierarchy as boolean | undefined,
               args.raw_format as boolean | undefined
             );
-          case 'xcresult_get_ui_element':
+          case 'xcode_xcresult_get_ui_element':
             if (!args.hierarchy_json_path) {
               throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: hierarchy_json_path`);
             }
@@ -729,7 +773,7 @@ export class XcodeServer {
               args.element_index as number,
               args.include_children as boolean | undefined
             );
-          case 'xcresult_list_attachments':
+          case 'xcode_xcresult_list_attachments':
             if (!args.xcresult_path) {
               throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcresult_path`);
             }
@@ -740,7 +784,7 @@ export class XcodeServer {
               args.xcresult_path as string,
               args.test_id as string
             );
-          case 'xcresult_export_attachment':
+          case 'xcode_xcresult_export_attachment':
             if (!args.xcresult_path) {
               throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcresult_path`);
             }
@@ -814,6 +858,37 @@ export class XcodeServer {
     return PathValidator.validateProjectPath(projectPath);
   }
 
+  private normalizeLockReason(rawReason: unknown, toolName: string): string {
+    if (typeof rawReason !== 'string') {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        `Missing required parameter: reason (briefly describe what part of the app you're touching for ${toolName}).`,
+      );
+    }
+    const trimmed = rawReason.trim();
+    if (!trimmed) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        'reason must be a short one-line summary (e.g., "Working on onboarding modals").',
+      );
+    }
+    if (/[\r\n]/.test(trimmed)) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        'reason must fit on a single line—please remove newlines.',
+      );
+    }
+    const normalized = trimmed.replace(/\s{2,}/g, ' ');
+    const maxLength = LockManager.getMaxReasonLength();
+    if (normalized.length > maxLength) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        `reason is too long (${normalized.length} characters). Keep it under ${maxLength} characters so teammates can scan it quickly.`,
+      );
+    }
+    return normalized;
+  }
+
   public async findProjectDerivedData(projectPath: string): Promise<string | null> {
     const { BuildLogParser } = await import('./utils/BuildLogParser.js');
     return BuildLogParser.findProjectDerivedData(projectPath);
@@ -825,9 +900,15 @@ export class XcodeServer {
   }
 
   // Direct method interfaces for testing/CLI compatibility
-  public async build(projectPath: string, schemeName = 'Debug', destination: string | null = null): Promise<import('./types/index.js').McpResult> {
+  public async build(
+    projectPath: string,
+    schemeName = 'Debug',
+    destination: string | null = null,
+    reason?: string,
+  ): Promise<import('./types/index.js').McpResult> {
     const { BuildTools } = await import('./tools/BuildTools.js');
-    return BuildTools.build(projectPath, schemeName, destination, this.openProject.bind(this));
+    const normalizedReason = this.normalizeLockReason(reason ?? '', 'xcode_build');
+    return BuildTools.build(projectPath, schemeName, normalizedReason, destination, this.openProject.bind(this));
   }
 
   public async clean(projectPath: string): Promise<import('./types/index.js').McpResult> {
@@ -841,9 +922,14 @@ export class XcodeServer {
     return BuildTools.test(projectPath, destination, commandLineArguments, this.openProject.bind(this));
   }
 
-  public async run(projectPath: string, commandLineArguments: string[] = []): Promise<import('./types/index.js').McpResult> {
+  public async run(
+    projectPath: string,
+    commandLineArguments: string[] = [],
+    reason?: string,
+  ): Promise<import('./types/index.js').McpResult> {
     const { BuildTools } = await import('./tools/BuildTools.js');
-    return BuildTools.run(projectPath, 'Debug', commandLineArguments, this.openProject.bind(this));
+    const normalizedReason = this.normalizeLockReason(reason ?? '', 'xcode_build_and_run');
+    return BuildTools.run(projectPath, 'Debug', normalizedReason, commandLineArguments, this.openProject.bind(this));
   }
 
   public async debug(projectPath: string, scheme: string, skipBuilding = false): Promise<import('./types/index.js').McpResult> {
@@ -956,12 +1042,16 @@ export class XcodeServer {
           if (!args.scheme) {
             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: scheme`);
           }
-          return await BuildTools.build(
-            args.xcodeproj as string, 
-            args.scheme as string, 
-            (args.destination as string) || null, 
-            this.openProject.bind(this)
-          );
+          {
+            const reason = this.normalizeLockReason(args.reason, 'xcode_build');
+            return await BuildTools.build(
+              args.xcodeproj as string,
+              args.scheme as string,
+              reason,
+              (args.destination as string) || null,
+              this.openProject.bind(this),
+            );
+          }
         case 'xcode_clean':
           if (!this.includeClean) {
             throw new McpError(ErrorCode.MethodNotFound, `Clean tool is disabled`);
@@ -982,18 +1072,27 @@ export class XcodeServer {
           if (!args.scheme) {
             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: scheme`);
           }
-          return await BuildTools.run(
-            args.xcodeproj as string, 
-            args.scheme as string,
-            (args.command_line_arguments as string[]) || [], 
-            this.openProject.bind(this)
-          );
+          {
+            const reason = this.normalizeLockReason(args.reason, 'xcode_build_and_run');
+            return await BuildTools.run(
+              args.xcodeproj as string,
+              args.scheme as string,
+              reason,
+              (args.command_line_arguments as string[]) || [],
+              this.openProject.bind(this),
+            );
+          }
+        case 'xcode_release_lock':
+          if (!args.xcodeproj) {
+            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
+          }
+          return await LockTools.release(args.xcodeproj as string);
         case 'xcode_stop':
           if (!args.xcodeproj) {
             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
           }
           return await BuildTools.stop(args.xcodeproj as string);
-        case 'find_xcresults':
+        case 'xcode_find_xcresults':
           if (!args.xcodeproj) {
             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcodeproj`);
           }
@@ -1035,9 +1134,149 @@ export class XcodeServer {
             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: file_path`);
           }
           return await InfoTools.openFile(args.file_path as string, args.line_number as number);
-        case 'list_sims':
+        case 'xcode_view_build_log': {
+          const parseBoolean = (value: unknown): boolean => {
+            if (typeof value === 'boolean') return value;
+            if (typeof value === 'string') {
+              return value.toLowerCase() === 'true';
+            }
+            return false;
+          };
+          const rawMaxLines =
+            typeof args.max_lines === 'number'
+              ? args.max_lines
+              : typeof args.max_lines === 'string'
+                ? Number.parseInt(args.max_lines, 10)
+                : undefined;
+          const normalizedMaxLines =
+            typeof rawMaxLines === 'number' && Number.isFinite(rawMaxLines) && rawMaxLines > 0
+              ? rawMaxLines
+              : undefined;
+          const logArgs: {
+            log_id?: string;
+            xcodeproj?: string;
+            filter_regex: boolean;
+            case_sensitive: boolean;
+            filter?: string;
+            max_lines?: number;
+            filter_globs?: string[];
+            cursor?: string;
+          } = {
+            filter_regex: parseBoolean(args.filter_regex),
+            case_sensitive: parseBoolean(args.case_sensitive),
+          };
+          const logId = (args.log_id as string) ?? (args.logId as string) ?? undefined;
+          if (logId) {
+            logArgs.log_id = logId;
+          }
+          const projectPath = (args.xcodeproj as string) ?? undefined;
+          if (projectPath) {
+            logArgs.xcodeproj = projectPath;
+          }
+          const filterGlobsArg =
+            (args.filter_globs as string[] | string | undefined) ??
+            (args.filterGlobs as string[] | string | undefined);
+          if (filterGlobsArg) {
+            if (Array.isArray(filterGlobsArg)) {
+              const sanitized = filterGlobsArg
+                .map(item => (typeof item === 'string' ? item.trim() : ''))
+                .filter(item => item.length > 0);
+              if (sanitized.length > 0) {
+                logArgs.filter_globs = sanitized;
+              }
+            } else if (typeof filterGlobsArg === 'string' && filterGlobsArg.trim().length > 0) {
+              logArgs.filter_globs = filterGlobsArg
+                .split(',')
+                .map(item => item.trim())
+                .filter(item => item.length > 0);
+            }
+          }
+          const cursorArg = (args.cursor as string) ?? undefined;
+          if (cursorArg) {
+            logArgs.cursor = cursorArg;
+          }
+          if (typeof args.filter === 'string' && args.filter.length > 0) {
+            logArgs.filter = args.filter;
+          }
+          if (normalizedMaxLines !== undefined) {
+            logArgs.max_lines = normalizedMaxLines;
+          }
+          return await LogTools.getBuildLog(logArgs);
+        }
+        case 'xcode_view_run_log': {
+          const parseBoolean = (value: unknown): boolean => {
+            if (typeof value === 'boolean') return value;
+            if (typeof value === 'string') {
+              return value.toLowerCase() === 'true';
+            }
+            return false;
+          };
+          const rawMaxLines =
+            typeof args.max_lines === 'number'
+              ? args.max_lines
+              : typeof args.max_lines === 'string'
+                ? Number.parseInt(args.max_lines, 10)
+                : undefined;
+          const normalizedMaxLines =
+            typeof rawMaxLines === 'number' && Number.isFinite(rawMaxLines) && rawMaxLines > 0
+              ? rawMaxLines
+              : undefined;
+          const logArgs: {
+            log_id?: string;
+            xcodeproj?: string;
+            filter_regex: boolean;
+            case_sensitive: boolean;
+            filter?: string;
+            max_lines?: number;
+            filter_globs?: string[];
+            cursor?: string;
+            log_type: 'build' | 'run';
+          } = {
+            filter_regex: parseBoolean(args.filter_regex),
+            case_sensitive: parseBoolean(args.case_sensitive),
+            log_type: 'run',
+          };
+          const logId = (args.log_id as string) ?? (args.logId as string) ?? undefined;
+          if (logId) {
+            logArgs.log_id = logId;
+          }
+          const projectPath = (args.xcodeproj as string) ?? undefined;
+          if (projectPath) {
+            logArgs.xcodeproj = projectPath;
+          }
+          const filterGlobsArg =
+            (args.filter_globs as string[] | string | undefined) ??
+            (args.filterGlobs as string[] | string | undefined);
+          if (filterGlobsArg) {
+            if (Array.isArray(filterGlobsArg)) {
+              const sanitized = filterGlobsArg
+                .map(item => (typeof item === 'string' ? item.trim() : ''))
+                .filter(item => item.length > 0);
+              if (sanitized.length > 0) {
+                logArgs.filter_globs = sanitized;
+              }
+            } else if (typeof filterGlobsArg === 'string' && filterGlobsArg.trim().length > 0) {
+              logArgs.filter_globs = filterGlobsArg
+                .split(',')
+                .map(item => item.trim())
+                .filter(item => item.length > 0);
+            }
+          }
+          const cursorArg = (args.cursor as string) ?? undefined;
+          if (cursorArg) {
+            logArgs.cursor = cursorArg;
+          }
+          if (typeof args.filter === 'string' && args.filter.length > 0) {
+            logArgs.filter = args.filter;
+          }
+          if (normalizedMaxLines !== undefined) {
+            logArgs.max_lines = normalizedMaxLines;
+          }
+          return await LogTools.getBuildLog(logArgs);
+        }
+        case 'xcode_list_sims':
           return await SimulatorTools.listSimulators();
-        case 'boot_sim': {
+        case 'xcode_boot_sim': {
           const simulatorUuid =
             (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
             (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
@@ -1046,9 +1285,9 @@ export class XcodeServer {
           }
           return await SimulatorTools.bootSimulator(simulatorUuid);
         }
-        case 'open_sim':
+        case 'xcode_open_sim':
           return await SimulatorTools.openSimulator();
-        case 'shutdown_sim': {
+        case 'xcode_shutdown_sim': {
           const simulatorUuid =
             (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
             (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
@@ -1057,7 +1296,7 @@ export class XcodeServer {
           }
           return await SimulatorTools.shutdownSimulator(simulatorUuid);
         }
-        case 'screenshot': {
+        case 'xcode_screenshot': {
           const simulatorUuid =
             (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
             (typeof args.simulatorUuid === 'string' && args.simulatorUuid) ||
@@ -1065,45 +1304,7 @@ export class XcodeServer {
           const savePath = typeof args.save_path === 'string' ? args.save_path : undefined;
           return await SimulatorTools.captureScreenshot(simulatorUuid, savePath);
         }
-        case 'start_sim_log_cap': {
-          const simulatorUuid =
-            (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
-            (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
-          if (!simulatorUuid) {
-            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: simulator_uuid`);
-          }
-          const bundleId =
-            (typeof args.bundle_id === 'string' && args.bundle_id) ||
-            (typeof args.bundleId === 'string' && args.bundleId);
-          if (!bundleId) {
-            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: bundle_id`);
-          }
-          const captureConsole =
-            typeof args.capture_console === 'boolean'
-              ? args.capture_console
-              : typeof args.capture_console === 'string'
-                ? args.capture_console.toLowerCase() === 'true'
-                : false;
-          const extraArgs = Array.isArray(args.command_line_arguments)
-            ? (args.command_line_arguments as unknown[]).filter((item): item is string => typeof item === 'string')
-            : [];
-          return await SimulatorLogTools.startLogCapture({
-            simulatorUuid,
-            bundleId,
-            captureConsole,
-            args: extraArgs,
-          });
-        }
-        case 'stop_sim_log_cap': {
-          const sessionId =
-            (typeof args.session_id === 'string' && args.session_id) ||
-            (typeof args.sessionId === 'string' && args.sessionId);
-          if (!sessionId) {
-            throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: session_id`);
-          }
-          return await SimulatorLogTools.stopLogCapture(sessionId);
-        }
-        case 'describe_ui': {
+        case 'xcode_describe_ui': {
           const simulatorUuid =
             (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
             (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
@@ -1112,7 +1313,7 @@ export class XcodeServer {
           }
           return await SimulatorUiTools.describeUI(simulatorUuid);
         }
-        case 'tap': {
+        case 'xcode_tap': {
           const simulatorUuid =
             (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
             (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
@@ -1128,7 +1329,7 @@ export class XcodeServer {
           if (postDelay !== undefined) tapOptions.postDelay = postDelay;
           return await SimulatorUiTools.tap(simulatorUuid, x, y, tapOptions);
         }
-        case 'type_text': {
+        case 'xcode_type_text': {
           const simulatorUuid =
             (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
             (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
@@ -1140,7 +1341,7 @@ export class XcodeServer {
           }
           return await SimulatorUiTools.typeText(simulatorUuid, args.text);
         }
-        case 'swipe': {
+        case 'xcode_swipe': {
           const simulatorUuid =
             (typeof args.simulator_uuid === 'string' && args.simulator_uuid) ||
             (typeof args.simulatorUuid === 'string' && args.simulatorUuid);
@@ -1167,7 +1368,7 @@ export class XcodeServer {
             swipeOptions,
           );
         }
-        case 'xcresult_browse':
+        case 'xcode_xcresult_browse':
           if (!args.xcresult_path) {
             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcresult_path`);
           }
@@ -1176,7 +1377,7 @@ export class XcodeServer {
             args.test_id as string | undefined,
             args.include_console as boolean || false
           );
-        case 'xcresult_browser_get_console':
+        case 'xcode_xcresult_browser_get_console':
           if (!args.xcresult_path) {
             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcresult_path`);
           }
@@ -1187,12 +1388,12 @@ export class XcodeServer {
             args.xcresult_path as string,
             args.test_id as string
           );
-        case 'xcresult_summary':
+        case 'xcode_xcresult_summary':
           if (!args.xcresult_path) {
             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcresult_path`);
           }
           return await XCResultTools.xcresultSummary(args.xcresult_path as string);
-        case 'xcresult_get_screenshot':
+        case 'xcode_xcresult_get_screenshot':
           if (!args.xcresult_path) {
             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcresult_path`);
           }
@@ -1207,7 +1408,7 @@ export class XcodeServer {
             args.test_id as string,
             args.timestamp as number
           );
-        case 'xcresult_get_ui_hierarchy':
+        case 'xcode_xcresult_get_ui_hierarchy':
           if (!args.xcresult_path) {
             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcresult_path`);
           }
@@ -1221,7 +1422,7 @@ export class XcodeServer {
             args.full_hierarchy as boolean | undefined,
             args.raw_format as boolean | undefined
           );
-        case 'xcresult_get_ui_element':
+        case 'xcode_xcresult_get_ui_element':
           if (!args.hierarchy_json_path) {
             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: hierarchy_json_path`);
           }
@@ -1233,7 +1434,7 @@ export class XcodeServer {
             args.element_index as number,
             args.include_children as boolean | undefined
           );
-        case 'xcresult_list_attachments':
+        case 'xcode_xcresult_list_attachments':
           if (!args.xcresult_path) {
             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcresult_path`);
           }
@@ -1244,7 +1445,7 @@ export class XcodeServer {
             args.xcresult_path as string,
             args.test_id as string
           );
-        case 'xcresult_export_attachment':
+        case 'xcode_xcresult_export_attachment':
           if (!args.xcresult_path) {
             throw new McpError(ErrorCode.InvalidParams, `Missing required parameter: xcresult_path`);
           }

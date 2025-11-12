@@ -169,7 +169,7 @@ export class SimulatorUiTools {
     y: number,
     options: { preDelay?: number; postDelay?: number } = {},
   ): Promise<McpResult> {
-    const args = ['tap', '-x', String(Math.round(x)), '-y', String(Math.round(y))];
+    const args = ['xcode_tap', '-x', String(Math.round(x)), '-y', String(Math.round(y))];
     if (options.preDelay !== undefined) {
       args.push('--pre-delay', String(options.preDelay));
     }
@@ -244,7 +244,7 @@ export class SimulatorUiTools {
     options: { duration?: number; delta?: number; preDelay?: number; postDelay?: number } = {},
   ): Promise<McpResult> {
     const args = [
-      'swipe',
+      'xcode_swipe',
       '--start-x',
       String(Math.round(start.x)),
       '--start-y',

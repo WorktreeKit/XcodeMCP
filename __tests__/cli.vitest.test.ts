@@ -14,6 +14,7 @@ vi.mock('commander', async () => {
       description() { return this; }
       option() { return this; }
       command() { return this; }
+      alias() { return this; }
       action() { return this; }
       parseAsync() { return Promise.resolve(); }
     }

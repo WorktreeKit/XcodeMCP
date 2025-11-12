@@ -8,6 +8,7 @@ import { XcodeServer } from './XcodeServer.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import Logger from './utils/Logger.js';
 import { getToolDefinitions, type ToolDefinition } from './shared/toolDefinitions.js';
+import LockManager from './utils/LockManager.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -306,8 +307,14 @@ async function main(): Promise<void> {
         
         // Define command categories
         const buildAndRunCommands = [
-          'build', 'build-and-run', 'stop', 
-          'get-run-destinations'
+          'build',
+          'build-and-run',
+          'release-lock',
+          'view-build-log',
+          'view-run-log',
+          'stop',
+          'get-run-destinations',
+          'release-all-locks',
         ];
         
         // Add clean only if not disabled
@@ -354,6 +361,7 @@ async function main(): Promise<void> {
         // Add non-tool commands
         toolMap.set('help', { description: 'Show help information' });
         toolMap.set('list-tools', { description: 'List all available tools' });
+        toolMap.set('release-all-locks', { description: 'CLI-only: Force release every outstanding build/run lock' });
         
         // Display categorized commands
         for (const [category, commands] of Object.entries(categories)) {
@@ -373,6 +381,24 @@ async function main(): Promise<void> {
         console.log('');
         console.log('⏱️  Note: Build, test, and run commands can take minutes to hours.');
         console.log('   The CLI handles long operations automatically - do not timeout.');
+      });
+
+    program
+      .command('release-all-locks')
+      .description('Force release every outstanding build/run lock (CLI-only safety valve)')
+      .action(async () => {
+        const { released, details } = await LockManager.releaseAllLocks();
+        if (released === 0) {
+          console.log('No active locks detected.');
+          return;
+        }
+        console.log(`Released ${released} lock${released === 1 ? '' : 's'}:`);
+        for (const detail of details) {
+          const reason = detail.reason ? `reason: "${detail.reason}"` : 'reason: n/a';
+          const waiting = Math.max(0, detail.queueDepth - 1);
+          const waitingMsg = waiting > 0 ? `, ${waiting} worker${waiting === 1 ? '' : 's'} were waiting` : '';
+          console.log(`  • ${detail.path} (${reason}${waitingMsg})`);
+        }
       });
     // Dynamically create subcommands for each tool
     for (const tool of tools) {
@@ -429,7 +455,8 @@ async function main(): Promise<void> {
               toolArgs = JSON.parse(cliArgs.jsonInput);
             } catch (error) {
               console.error('❌ Invalid JSON input:', error);
-              process.exit(1);
+              process.exitCode = 1;
+              return;
             }
           } else {
             toolArgs = parseToolArgs(tool, cliArgs);
@@ -445,7 +472,8 @@ async function main(): Promise<void> {
             if (error) {
               const output = formatResult(error, program.opts().json);
               console.error(output);
-              process.exit(1);
+              process.exitCode = 1;
+              return;
             }
             
             toolArgs.xcodeproj = resolvedPath;
@@ -481,13 +509,14 @@ async function main(): Promise<void> {
             console.log(output);
           }
           
-          // Exit with appropriate code
-          process.exit(hasError ? 1 : 0);
+          // Exit with appropriate code without forcing an immediate shutdown (allows stdout flush)
+          process.exitCode = hasError ? 1 : 0;
+          return;
           
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : String(error);
           console.error(`❌ ${tool.name} failed:`, errorMsg);
-          process.exit(1);
+          process.exitCode = 1;
         }
       });
     }
@@ -510,7 +539,7 @@ if (process.env.NODE_ENV !== 'test' || process.argv[1]?.includes('cli.js')) {
   main().catch((error) => {
     Logger.error('CLI execution failed:', error);
     console.error('❌ CLI execution failed:', error);
-    process.exit(1);
+    process.exitCode = 1;
   });
 }
 

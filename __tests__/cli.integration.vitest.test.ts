@@ -106,7 +106,8 @@ describe('CLI Integration Tests', () => {
         CLI_PATH,
         'build',
         '--xcodeproj', '/non/existent/project.xcodeproj',
-        '--scheme', 'Test'
+        '--scheme', 'Test',
+        '--reason', 'CLI integration test',
       ])
     ).rejects.toMatchObject({
       exitCode: 1,

@@ -289,6 +289,37 @@ export class BuildLogParser {
     }
   }
 
+  public static async getLatestRunLog(projectPath: string, sinceTime?: number): Promise<BuildLogInfo | null> {
+    const derivedData = await this.findProjectDerivedData(projectPath);
+    if (!derivedData) return null;
+    const logsDir = path.join(derivedData, 'Logs', 'Run');
+    try {
+      const files = await readdir(logsDir);
+      const logFiles = files.filter(file => file.endsWith('.log'));
+      if (logFiles.length === 0) return null;
+      let latestLog: BuildLogInfo | null = null;
+      let latestTime = 0;
+      for (const logFile of logFiles) {
+        const fullPath = path.join(logsDir, logFile);
+        const stats = await stat(fullPath);
+        const logTime = stats.mtime.getTime();
+        if (sinceTime && logTime <= sinceTime) {
+          continue;
+        }
+        if (logTime > latestTime) {
+          latestTime = logTime;
+          latestLog = { path: fullPath, mtime: stats.mtime };
+        }
+      }
+      if (!latestLog && sinceTime) {
+        return this.getLatestRunLog(projectPath);
+      }
+      return latestLog;
+    } catch {
+      return null;
+    }
+  }
+
   public static async parseBuildLog(
     logPath: string,
     retryCount = 0,

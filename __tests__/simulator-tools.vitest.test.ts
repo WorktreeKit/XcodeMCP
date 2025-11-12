@@ -17,7 +17,7 @@ describe('Simulator tool integration', () => {
   });
 
   it('returns validation error when boot_sim is missing simulator_uuid', async () => {
-    const result = await server.callToolDirect('boot_sim', {});
+    const result = await server.callToolDirect('xcode_boot_sim', {});
     const text = result.content?.[0]?.type === 'text' ? result.content[0].text : '';
     expect(text).toContain('simulator_uuid');
     expect(result.isError ?? false).toBeFalsy();
@@ -26,7 +26,7 @@ describe('Simulator tool integration', () => {
   it('delegates boot_sim to SimulatorTools', async () => {
     const mockResult = { content: [{ type: 'text', text: 'booted' }] } as const;
     vi.spyOn(SimulatorTools, 'bootSimulator').mockResolvedValue(mockResult as any);
-    const result = await server.callToolDirect('boot_sim', { simulator_uuid: 'ABCDE' });
+    const result = await server.callToolDirect('xcode_boot_sim', { simulator_uuid: 'ABCDE' });
     expect(SimulatorTools.bootSimulator).toHaveBeenCalledWith('ABCDE');
     expect(result.content?.[0]?.type).toBe('text');
     expect(result.content?.[0]?.text).toBe('booted');

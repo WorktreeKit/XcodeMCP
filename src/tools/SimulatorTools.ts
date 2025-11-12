@@ -38,7 +38,7 @@ export class SimulatorTools {
       if (!lines.length) {
         response += 'No available simulators were returned by simctl.';
       } else {
-        response += `${lines.join('\n')}\nNext Steps:\n- Boot a simulator: boot_sim({ simulator_uuid: 'UUID_FROM_ABOVE' })\n- Open the simulator UI: open_sim({})`;
+        response += `${lines.join('\n')}\nNext Steps:\n- Boot a simulator: xcode_boot_sim({ simulator_uuid: 'UUID_FROM_ABOVE' })\n- Open the simulator UI: xcode_open_sim({})`;
       }
 
       return {
@@ -71,7 +71,7 @@ export class SimulatorTools {
         content: [
           {
             type: 'text',
-            text: `✅ Simulator ${simulatorUuid} booted successfully.\n\nNext Steps:\n- Make sure the Simulator UI is visible: open_sim({})\n- Launch your app with xcode_build_and_run or install it manually.`,
+            text: `✅ Simulator ${simulatorUuid} booted successfully.\n\nNext Steps:\n- Make sure the Simulator UI is visible: xcode_open_sim({})\n- Launch your app with xcode_build_and_run or install it manually.`,
           },
         ],
       };

@@ -14,6 +14,7 @@ Model Context Protocol (MCP) server that controls Xcode directly through JavaScr
 - Adds simulator tooling: list/boot/shutdown, capture live logs, grab screenshots, and drive UI automation with [AXe](https://github.com/cameroncooke/axe) without touching the `xcodebuild` CLI
 - Supports graceful degradation when optional dependencies are missing
 - **NEW**: Includes a full-featured CLI with 100% MCP server feature parity
+- **NEW**: Coordinates multi-worker build queues with exclusive locks and explicit release commands
 
 ## Requirements
 
@@ -149,7 +150,10 @@ npm install -g xcodemcp
 xcodecontrol --help
 
 # Run a tool with flags  
-xcodecontrol build --xcodeproj /path/to/Project.xcodeproj --scheme MyScheme
+xcodecontrol build \
+  --xcodeproj /path/to/Project.xcodeproj \
+  --scheme MyScheme \
+  --reason "Working on onboarding flow"
 # Run tests and wait for completion (default)
 xcodecontrol test --xcodeproj /path/to/Project.xcodeproj --scheme MyScheme --device-type iphone --os-version 18.0
 
@@ -178,17 +182,66 @@ xcodecontrol open-sim
 # Capture a screenshot from the currently booted simulator
 xcodecontrol screenshot --save-path /tmp/screenshot.png
 
-# Start and stop log capture for a simulator/app pair
-xcodecontrol start-sim-log-cap --simulator-uuid "<UUID>" --bundle-id "com.example.MyApp"
-xcodecontrol stop-sim-log-cap --session-id "<SESSION>"
-
 # Drive the UI with AXe (describe → tap → type)
 xcodecontrol describe-ui --simulator-uuid "<UUID>"
 xcodecontrol tap --simulator-uuid "<UUID>" --x 180 --y 420
 xcodecontrol type-text --simulator-uuid "<UUID>" --text "Hello world!"
 ```
 
-These tools are also available through any MCP client. Refer to `list_sims`, `boot_sim`, `start_sim_log_cap`, `describe_ui`, `tap`, `type_text`, `swipe`, and `screenshot` in your client's tool list.
+These tools are also available through any MCP client. Refer to `xcode_list_sims`, `xcode_boot_sim`, `xcode_describe_ui`, `xcode_tap`, `xcode_type_text`, `xcode_swipe`, and `xcode_screenshot` in your client's tool list.
+
+### Exclusive Build Locks
+
+Build- and run-style commands now coordinate through a shared lock directory (default: `~/Library/Application Support/XcodeMCP/locks`). Every time you run `xcodecontrol build` or `xcodecontrol build-and-run`, you **must** supply a short `--reason` that summarizes the part of the app you're touching. The command will wait (via file system events, no busy polling) until it's your turn, then print a footer reminding you to release the lock when you're finished inspecting logs or simulator state.
+
+```bash
+# Acquire the lock and build
+xcodecontrol build \
+  --xcodeproj /path/to/App.xcodeproj \
+  --scheme Debug \
+  --reason "Tweaking settings tab navigation"
+
+# Once you've finished reviewing the results, release your slot
+xcodecontrol release-lock --xcodeproj /path/to/App.xcodeproj
+
+# Emergency: clear every outstanding lock (CLI-only safety valve)
+xcodecontrol release-all-locks
+```
+
+The same release command is exposed to MCP clients as `xcode_release_lock`. Locks are represented as YAML files per project/workspace so multiple workers (or multiple MCP servers) can coordinate safely across processes and sandboxes.
+
+### Inspect Build & Run Logs
+
+Each `xcode_build` / `build-and-run` command now reports a **Log ID** and filesystem path for the associated `.xcactivitylog`. Use the new viewer to inspect it (optionally while the build is still running):
+
+```bash
+# Show the exact log returned by your last build command
+xcodecontrol view-build-log --log-id "<LOG_ID_FROM_BUILD>"
+
+# Or grab the latest log for a project/workspace and filter for errors
+xcodecontrol view-build-log \
+  --xcodeproj /Users/me/ManabiReader/ManabiReader.xcodeproj \
+  --filter "error" \
+  --max-lines 200
+
+# Match multiple patterns with glob syntax (case-insensitive by default)
+xcodecontrol view-build-log \
+  --log-id "<LOG_ID>" \
+  --filter-globs "*error*,*warning*,type-check failed"
+
+# Resume where you left off using the cursor returned from the previous command
+xcodecontrol view-build-log --log-id "<LOG_ID>" --cursor "<CURSOR>" --filter "warning"
+
+# Use regex / case-sensitive filters if needed
+xcodecontrol view-build-log --log-id "<LOG_ID>" --filter "The compiler.*type-check" --filter-regex --case-sensitive
+
+# Inspect the runtime console log (same filters & cursor support)
+xcodecontrol build-and-run --xcodeproj ... --scheme ...
+# ...after it finishes:
+xcodecontrol view-run-log --log-id "<LOG_ID_FROM_RUN_SECTION>" --filter-globs "*# DETENTS*"
+```
+
+These are exposed as the `xcode_view_build_log` and `xcode_view_run_log` MCP tools (`filter_globs` accepts an array of glob expressions).
 
 ### Path Resolution
 
@@ -256,7 +309,7 @@ CLI commands use kebab-case instead of underscores:
 - `xcode_build_and_run` → `build-and-run`
 - `xcode_health_check` → `health-check`
 - `xcresult_browse` → `xcresult-browse`
-- `find_xcresults` → `find-xcresults`
+- `xcode_find_xcresults` → `find-xcresults`
 
 ## Available Tools
 

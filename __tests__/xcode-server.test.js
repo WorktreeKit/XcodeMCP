@@ -288,14 +288,15 @@ describeIfXcode('XcodeMCPServer', () => {
       const server = new XcodeMCPServer();
       
       // Test multiple methods to ensure they generate valid JS
+      const fakeProject = '/Users/test/TestApp.xcodeproj';
       const methods = [
-        () => server.build(),
-        () => server.clean(),
-        () => server.stop(),
-        () => server.getSchemes(),
-        () => server.getRunDestinations(),
-        () => server.getWorkspaceInfo(),
-        () => server.getProjects()
+        () => server.build(fakeProject, 'Debug', null, 'Script generation test'),
+        () => server.clean(fakeProject),
+        () => server.stop(fakeProject),
+        () => server.getSchemes(fakeProject),
+        () => server.getRunDestinations(fakeProject),
+        () => server.getWorkspaceInfo(fakeProject),
+        () => server.getProjects(fakeProject)
       ];
       
       for (const method of methods) {

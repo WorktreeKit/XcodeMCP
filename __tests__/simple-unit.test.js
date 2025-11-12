@@ -101,7 +101,7 @@ describe('XcodeMCPServer Basic Tests', () => {
     
     // Test that methods exist and can be called (though they will fail without proper mocking)
     expect(() => server.openProject('/test/path')).not.toThrow();
-    expect(() => server.build()).not.toThrow();
+    expect(() => server.build('/test/path', 'Debug', null, 'Simple unit smoke')).not.toThrow();
     expect(() => server.clean()).not.toThrow();
   });
 });
