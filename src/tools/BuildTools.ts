@@ -115,8 +115,8 @@ export class BuildTools {
       }
 
     if (destination) {
-      // Normalize the destination name for better matching
-      const normalizedDestination = ParameterNormalizer.normalizeDestinationName(destination);
+      // Pre-compute destination name candidates for flexible matching
+      const destinationCandidates = ParameterNormalizer.getDestinationNameCandidates(destination);
       
       const setDestinationScript = `
         (function() {
@@ -124,14 +124,23 @@ export class BuildTools {
           
           const destinations = workspace.runDestinations();
           const destinationNames = destinations.map(dest => dest.name());
+          const candidateNames = ${JSON.stringify(destinationCandidates)};
+          
+          const findMatch = (names) => {
+            if (!names || !names.length) {
+              return null;
+            }
+            for (const name of names) {
+              const match = destinations.find(dest => dest.name() === name);
+              if (match) {
+                return match;
+              }
+            }
+            return null;
+          };
           
           // Try exact match first
-          let targetDestination = destinations.find(dest => dest.name() === ${JSON.stringify(normalizedDestination)});
-          
-          // If not found, try original name
-          if (!targetDestination) {
-            targetDestination = destinations.find(dest => dest.name() === ${JSON.stringify(destination)});
-          }
+          let targetDestination = findMatch(candidateNames);
           
           if (!targetDestination) {
             throw new Error('Destination not found. Available: ' + JSON.stringify(destinationNames));

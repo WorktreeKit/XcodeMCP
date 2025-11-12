@@ -310,6 +310,10 @@ vi.mock('../src/utils/ParameterNormalizer.js', () => {
         return name;
       }),
       normalizeDestinationName: vi.fn().mockImplementation((dest: string) => dest || 'Default Destination'),
+      getDestinationNameCandidates: vi.fn().mockImplementation((dest: string) => {
+        const normalized = dest || 'Default Destination';
+        return [normalized];
+      }),
       findBestMatch: vi.fn().mockImplementation((input: string, options: string[]) => {
         if (!input || !options.length) return null;
         return options.find(opt => opt.toLowerCase().includes(input.toLowerCase())) || options[0];
